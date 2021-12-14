@@ -5,8 +5,9 @@ from kl_divergence_calculator import kl_divergence
 from numpy import prod
 
 _device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def _latent_dims_type_setter(lds): # version 1.0
+def _latent_dims_type_setter(lds):
     ret, ret_flatten = [], []
     for ld in lds:
         if hasattr(ld, '__iter__'): # Iterable
@@ -24,9 +25,9 @@ def _latent_dims_type_setter(lds): # version 1.0
 
 
 class POISEVAE(nn.Module):
-    __version__ = 1.0
+    __version__ = 2.0
     
-    def __init__(self, encoders, decoders, batch_size, latent_dims=None, use_mse_loss=True,
+    def __init__(self, encoders, decoders, batch_size, loss, latent_dims=None,
                  device=_device):
         """
         encoders: list of nn.Module
@@ -40,19 +41,19 @@ class POISEVAE(nn.Module):
             
         batch_size: int
         
+        loss: str
+            Can either be 'MSE' for MSE loss or 'BCE' for BCE loss. The users should properly 
+            restrict the range of the output of their decoders for the loss chosen.
+        
         latent_dims: iterable, optional; default None
             The dimensions of the latent spaces to which the encoders encode. The indices of the 
             entries must match those of encoders. An alternative way to specify the dimensions is
             to add the attribute `latent_dim` to each encoder (see above).
             Note that each entry must be unsqueezed, e.g. (10, ) is not the same as (10, 1).
         
-        use_mse_loss: boolean, optional; default True
-            To use MSE loss or not; if not, BCE loss will be used.
-        
         device: torch.device, optional
         """
         super(POISEVAE,self).__init__()
-        self.__version__ = 1.0
 
         if len(encoders) != len(decoders):
             raise ValueError('The number of encoders must match that of decoders.')
@@ -73,11 +74,16 @@ class POISEVAE(nn.Module):
             self.latent_dims = tuple(map(lambda l: l.latent_dim, encoders))
         self.latent_dims, self.latent_dims_flatten = _latent_dims_type_setter(self.latent_dims)
 
-        self.encoders = encoders
-        self.decoders = decoders
-
+        if batch_size <= 0:
+            raise ValueError('Invalid batch size')
         self.batch_size = batch_size
-        self.use_mse_loss = use_mse_loss
+        
+        if loss not in ['MSE', 'BCE']: 
+            raise NotImplementedError('Not yet supported for other loss functions')
+        self.loss = loss
+        
+        self.encoders = nn.ModuleList(encoders)
+        self.decoders = nn.ModuleList(decoders)
         
         self.device = device
 
@@ -100,12 +106,27 @@ class POISEVAE(nn.Module):
         for decoder, z, ld in zip(self.decoders, self.z_gibbs_posteriors, self.latent_dims):
             z = z.view(self.batch_size, *ld) # Match the shape to the output
             x_ = decoder(z)
-            if not self.use_mse_loss: # BCE instead
-                x_ = torch.sigmoid(x_)
             ret.append(x_)
         return ret
 
     def forward(self, x):
+        """
+        Return
+        ------
+        results: dict
+            z: list of torch.Tensor
+                Samples from the posterior distributions in the corresponding latent spaces
+            x_rec: list of torch.Tensor
+                Reconstructed samples
+            mu: list of torch.Tensor
+                Posterior distribution means
+            var: list of torch.Tensor
+                Posterior distribution variances
+            total_loss: torch.Tensor
+            rec_losses: list of torch.tensor
+                Reconstruction loss for each dataset
+            KL_loss: torch.Tensor
+        """
         mu, var = [], []
         for i, xi in enumerate(x):
             _mu, _log_var = self.encoders[i].forward(xi)
@@ -148,11 +169,17 @@ class POISEVAE(nn.Module):
         KL_loss  = sum(kls)
 
         # Reconstruction loss
-        loss_func = nn.MSELoss(reduction='sum') if self.use_mse_loss else nn.BCELoss(reduction='sum')
-        recs = list(map(lambda x: loss_func(x[0], x[1]), zip(x_, x)))
+        rec_loss_func = nn.MSELoss(reduction='sum') if self.loss == 'MSE' else \
+                        nn.BCELoss(reduction='sum')
+        recs = list(map(lambda x: rec_loss_func(x[0], x[1]), zip(x_, x)))
         rec_loss = sum(recs)
         
         # Total loss
-        loss = KL_loss + rec_loss
+        total_loss = KL_loss + rec_loss
 
-        return self.z_posteriors, x_, mu, var, loss, recs, KL_loss
+        results = {
+            'z': self.z_posteriors, 'x_rec': x_, 'mu': mu, 'var': var, 
+            'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': KL_loss
+        }
+
+        return results
