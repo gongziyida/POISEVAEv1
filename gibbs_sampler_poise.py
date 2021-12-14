@@ -1,8 +1,11 @@
 import torch
 import torch.nn as nn
+
 _device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class gibbs_sampler():
+    __version__ = 1.0
+    
     def __init__(self, latent_dims, batch_size, device=_device):
         self.latent_dims = latent_dims
         self.batch_size = batch_size

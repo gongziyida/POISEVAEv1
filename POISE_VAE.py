@@ -6,7 +6,7 @@ from numpy import prod
 
 _device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def _latent_dims_type_setter(lds):
+def _latent_dims_type_setter(lds): # version 1.0
     ret, ret_flatten = [], []
     for ld in lds:
         if hasattr(ld, '__iter__'): # Iterable
@@ -24,6 +24,8 @@ def _latent_dims_type_setter(lds):
 
 
 class POISEVAE(nn.Module):
+    __version__ = 1.0
+    
     def __init__(self, encoders, decoders, batch_size, latent_dims=None, use_mse_loss=True,
                  device=_device):
         """
@@ -50,6 +52,7 @@ class POISEVAE(nn.Module):
         device: torch.device, optional
         """
         super(POISEVAE,self).__init__()
+        self.__version__ = 1.0
 
         if len(encoders) != len(decoders):
             raise ValueError('The number of encoders must match that of decoders.')
