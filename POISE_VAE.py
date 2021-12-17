@@ -1,10 +1,9 @@
 import torch
 import torch.nn as nn
-from gibbs_sampler_poise import gibbs_sampler
-from kl_divergence_calculator import kl_divergence
+from .gibbs_sampler_poise import GibbsSampler
+from .kl_divergence_calculator import KLD
 from numpy import prod
 
-_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 _device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def _latent_dims_type_setter(lds):
@@ -25,16 +24,20 @@ def _latent_dims_type_setter(lds):
 
 
 class POISEVAE(nn.Module):
-    __version__ = 2.0
+    __version__ = 3.0
     
     def __init__(self, encoders, decoders, batch_size, loss, latent_dims=None,
                  device=_device):
         """
+        Parameters
+        ----------
         encoders: list of nn.Module
             Each encoder must have an attribute `latent_dim` specifying the dimension of the
             latent space to which it encodes. An alternative way to avoid adding this attribute
             is to specify the `latent_dims` parameter (see below). 
             Note that each `latent_dim` must be unsqueezed, e.g. (10, ) is not the same as (10, 1).
+            For now the model only support Gaussian distributions of the encodings. 
+            The encoders must output the mean and log variance of the Gaussian distributions.
             
         decoders: list of nn.Module
             The number and indices of decoders must match those of encoders.
@@ -87,8 +90,8 @@ class POISEVAE(nn.Module):
         
         self.device = device
 
-        self.gibbs = gibbs_sampler(self.latent_dims_flatten, batch_size)
-        self.kl_div = kl_divergence(self.latent_dims_flatten, batch_size)
+        self.gibbs = GibbsSampler(self.latent_dims_flatten, batch_size)
+        self.kl_div = KLD(self.latent_dims_flatten, batch_size)
 
         self.register_parameter(name='g11', 
                                 param=nn.Parameter(torch.randn(*self.latent_dims_flatten, 
@@ -97,18 +100,67 @@ class POISEVAE(nn.Module):
                                 param=nn.Parameter(torch.randn(*self.latent_dims_flatten, 
                                                                device=self.device)))
         self.flag_initialize = 1
-
-    def _decoder_helper(self):
+    
+    def encode(self, x):
         """
-        Reshape samples drawn from each latent space, and decode with considering the loss function
+        Encode the samples from multiple sources
+        Parameter
+        ---------
+        x: list of torch.Tensor
+        Return
+        ------
+        z: list of torch.Tensor
         """
-        ret = []
-        for decoder, z, ld in zip(self.decoders, self.z_gibbs_posteriors, self.latent_dims):
-            z = z.view(self.batch_size, *ld) # Match the shape to the output
-            x_ = decoder(z)
-            ret.append(x_)
-        return ret
+        mu, var = [], []
+        for i, xi in enumerate(x):
+            _mu, _log_var = self.encoders[i](xi)
+            mu.append(_mu.view(self.batch_size, -1))
+            var.append(-torch.exp(_log_var.view(self.batch_size, -1)))
+        return mu, var
+    
+    def decode(self, z):
+        """
+        Unsqueeze the samples from each latent space (if necessary), and decode
+        Parameter
+        ---------
+        z: list of torch.Tensor
+        Return
+        ------
+        x_rec: list of torch.Tensor
+        """
+        x_rec = []
+        for decoder, zi, ld in zip(self.decoders, z, self.latent_dims):
+            zi = zi.view(self.batch_size, *ld) # Match the shape to the output
+            x_ = decoder(zi)
+            x_rec.append(x_)
+        return x_rec
+    
+    def _init_gibbs(self, g22, mu, var, n_iterations=5000):
+        """
+        Initialize the starting points for Gibbs sampling
+        """
+        z_priors = self.gibbs.sample(self.g11, g22, n_iterations=n_iterations)
+        z_posteriors = self.gibbs.sample(self.g11, g22, lambda1s=mu, lambda2s=var,
+                                         n_iterations=n_iterations)
 
+        self.z_priors = z_priors
+        self.z_posteriors = z_posteriors
+        self.flag_initialize = 0
+        
+    def _sampling(self, g22, mu, var, n_iterations=5):
+        z_priors = [z.detach() for z in self.z_priors]
+        z_posteriors = [z.detach() for z in self.z_posteriors]
+
+        z_gibbs_priors = self.gibbs.sample(self.g11, g22, z=z_priors, n_iterations=n_iterations)
+        z_gibbs_posteriors = self.gibbs.sample(self.g11, g22, lambda1s=mu, lambda2s=var,
+                                               z=z_posteriors, n_iterations=n_iterations)
+
+        # For calculating the loss and future use
+        self.z_priors = [z.detach() for z in z_gibbs_priors]
+        self.z_posteriors = [z.detach() for z in z_gibbs_posteriors]
+        
+        return z_gibbs_priors, z_gibbs_posteriors
+        
     def forward(self, x):
         """
         Return
@@ -127,45 +179,22 @@ class POISEVAE(nn.Module):
                 Reconstruction loss for each dataset
             KL_loss: torch.Tensor
         """
-        mu, var = [], []
-        for i, xi in enumerate(x):
-            _mu, _log_var = self.encoders[i].forward(xi)
-            mu.append(_mu.view(self.batch_size, -1))
-            var.append(-torch.exp(_log_var.view(self.batch_size, -1)))
-
+        mu, var = self.encode(x)
+        
         g22 = -torch.exp(self.g22)
 
         # Initializing gibbs sample
         if self.flag_initialize == 1:
-            z_priors = self.gibbs.sample(self.g11, g22, n_iterations=5000)
-            z_posteriors = self.gibbs.sample(self.g11, g22, lambda1s=mu, lambda2s=var,
-                                             n_iterations=5000)
+            self._init_gibbs(g22, mu, var) # self.z_priors and .z_posteriors are now init.ed
+        # Actual sampling
+        z_gibbs_priors, z_gibbs_posteriors = self._sampling(g22, mu, var, n_iterations=5)
 
-            self.z_priors = z_priors
-            self.z_posteriors = z_posteriors
-            self.flag_initialize = 0
+        x_ = self.decode(z_gibbs_posteriors) # Decoding
 
-        z_priors = list(map(lambda z: z.detach(), self.z_priors))
-        z_posteriors = list(map(lambda z: z.detach(), self.z_posteriors))
-
-        # If lambda not provided, treat as zeros to save memory and computation
-        self.z_gibbs_priors = self.gibbs.sample(self.g11, g22, z=z_priors, n_iterations=5)
-        self.z_gibbs_posteriors = self.gibbs.sample(self.g11, g22, lambda1s=mu, lambda2s=var,
-                                                    z=z_posteriors, n_iterations=5)
-
-        self.z_priors = list(map(lambda z: z.detach(), self.z_gibbs_priors))
-        self.z_posteriors = list(map(lambda z: z.detach(), self.z_gibbs_posteriors))
-
-        G = torch.block_diag(self.g11, self.g22)
-
-        x_ = self._decoder_helper() # Decoding
-
-        # self.z2_gibbs_posterior = self.z2_gibbs_posterior.squeeze()
-        for i in range(len(self.z_gibbs_posteriors)):
-            self.z_gibbs_posteriors[i] = self.z_gibbs_posteriors[i].squeeze()
+        G = torch.block_diag(self.g11, g22)
 
         # KL loss
-        kls = self.kl_div.calc(G, self.z_gibbs_posteriors, self.z_gibbs_priors, mu,var)
+        kls = self.kl_div.calc(G, z_gibbs_posteriors, z_gibbs_priors, mu,var)
         KL_loss  = sum(kls)
 
         # Reconstruction loss

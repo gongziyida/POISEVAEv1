@@ -3,7 +3,7 @@ from torchviz import make_dot
 
 _device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-class kl_divergence():
+class KLD():
     __version__ = 1.0
     
     def __init__(self, latent_dims, batch_size, device=_device):
