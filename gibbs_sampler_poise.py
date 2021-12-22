@@ -6,9 +6,8 @@ _device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class GibbsSampler():
     __version__ = 1.0
     
-    def __init__(self, latent_dims, batch_size, device=_device):
+    def __init__(self, latent_dims, device=_device):
         self.latent_dims = latent_dims
-        self.batch_size = batch_size
         self.device = device
 
     def var_calc(self,z, g22, lambda_2):
@@ -29,7 +28,7 @@ class GibbsSampler():
         out = mean1 + torch.sqrt(var1.float()) * torch.randn_like(var1)
         return out
 
-    def sample(self, g11, g22, z=None, lambda1s=None, lambda2s=None, n_iterations=1):
+    def sample(self, g11, g22, z=None, lambda1s=None, lambda2s=None, n_iterations=1, batch_size=None):
         """
         g11, g22: 
             Diagonal blocks of the metric tensor
@@ -42,6 +41,8 @@ class GibbsSampler():
             Natural parameter 2 of the latent distributions
             If not provided, treat as zeros
         n_iterations: int, optional; default 1
+        batch_size: int, optional
+            Only required when z is not given
         """
             # TODO: function signature of gibbs_sample: optional parameters
             # flag_init. not necessary; if z not provided, init. z rand.ly
@@ -49,7 +50,9 @@ class GibbsSampler():
             # in case people want to look carefully in the future
             # I made an attempt in the local file `gibbs_sampler_poise.py`; debugging needed
         if z is None:
-            z = [torch.randn(self.batch_size, ld).squeeze().to(self.device) 
+            if batch_size is None:
+                raise RuntimeError('batch_size must be specified if z is not given.')
+            z = [torch.randn(batch_size, ld).squeeze().to(self.device) 
                  for ld in self.latent_dims]
         if lambda1s is None:
             lambda1s = [None for _ in range(len(self.latent_dims))]

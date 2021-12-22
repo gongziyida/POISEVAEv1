@@ -26,7 +26,7 @@ def _latent_dims_type_setter(lds):
 class POISEVAE(nn.Module):
     __version__ = 3.0
     
-    def __init__(self, encoders, decoders, batch_size, loss, latent_dims=None,
+    def __init__(self, encoders, decoders, loss, latent_dims=None, batch=True,
                  device=_device):
         """
         Parameters
@@ -41,8 +41,6 @@ class POISEVAE(nn.Module):
             
         decoders: list of nn.Module
             The number and indices of decoders must match those of encoders.
-            
-        batch_size: int
         
         loss: str
             Can either be 'MSE' for MSE loss or 'BCE' for BCE loss. The users should properly 
@@ -53,6 +51,9 @@ class POISEVAE(nn.Module):
             entries must match those of encoders. An alternative way to specify the dimensions is
             to add the attribute `latent_dim` to each encoder (see above).
             Note that each entry must be unsqueezed, e.g. (10, ) is not the same as (10, 1).
+        
+        batch: bool
+            If the data is in batches
         
         device: torch.device, optional
         """
@@ -77,9 +78,8 @@ class POISEVAE(nn.Module):
             self.latent_dims = tuple(map(lambda l: l.latent_dim, encoders))
         self.latent_dims, self.latent_dims_flatten = _latent_dims_type_setter(self.latent_dims)
 
-        if batch_size <= 0:
-            raise ValueError('Invalid batch size')
-        self.batch_size = batch_size
+        self.batch = batch
+        self._batch_size = -1 # init
         
         if loss not in ['MSE', 'BCE']: 
             raise NotImplementedError('Not yet supported for other loss functions')
@@ -90,8 +90,8 @@ class POISEVAE(nn.Module):
         
         self.device = device
 
-        self.gibbs = GibbsSampler(self.latent_dims_flatten, batch_size)
-        self.kl_div = KLD(self.latent_dims_flatten, batch_size)
+        self.gibbs = GibbsSampler(self.latent_dims_flatten)
+        self.kl_div = KLD(self.latent_dims_flatten)
 
         self.register_parameter(name='g11', 
                                 param=nn.Parameter(torch.randn(*self.latent_dims_flatten, 
@@ -114,8 +114,9 @@ class POISEVAE(nn.Module):
         mu, var = [], []
         for i, xi in enumerate(x):
             _mu, _log_var = self.encoders[i](xi)
-            mu.append(_mu.view(self.batch_size, -1))
-            var.append(-torch.exp(_log_var.view(self.batch_size, -1)))
+            batch_size = xi.shape[0] if self.batch else 1
+            mu.append(_mu.view(batch_size, -1))
+            var.append(-torch.exp(_log_var.view(batch_size, -1)))
         return mu, var
     
     def decode(self, z):
@@ -130,7 +131,8 @@ class POISEVAE(nn.Module):
         """
         x_rec = []
         for decoder, zi, ld in zip(self.decoders, z, self.latent_dims):
-            zi = zi.view(self.batch_size, *ld) # Match the shape to the output
+            batch_size = zi.shape[0] if self.batch else 1
+            zi = zi.view(batch_size, *ld) # Match the shape to the output
             x_ = decoder(zi)
             x_rec.append(x_)
         return x_rec
@@ -139,9 +141,12 @@ class POISEVAE(nn.Module):
         """
         Initialize the starting points for Gibbs sampling
         """
-        z_priors = self.gibbs.sample(self.g11, g22, n_iterations=n_iterations)
+        batch_size = mu[0].shape[0] if self.batch else 1
+        self._batch_size = batch_size
+        z_priors = self.gibbs.sample(self.g11, g22, 
+                                     n_iterations=n_iterations, batch_size=batch_size)
         z_posteriors = self.gibbs.sample(self.g11, g22, lambda1s=mu, lambda2s=var,
-                                         n_iterations=n_iterations)
+                                         n_iterations=n_iterations, batch_size=batch_size)
 
         self.z_priors = z_priors
         self.z_posteriors = z_posteriors
@@ -152,8 +157,10 @@ class POISEVAE(nn.Module):
         z_posteriors = [z.detach() for z in self.z_posteriors]
 
         z_gibbs_priors = self.gibbs.sample(self.g11, g22, z=z_priors, n_iterations=n_iterations)
+
         z_gibbs_posteriors = self.gibbs.sample(self.g11, g22, lambda1s=mu, lambda2s=var,
                                                z=z_posteriors, n_iterations=n_iterations)
+
 
         # For calculating the loss and future use
         self.z_priors = [z.detach() for z in z_gibbs_priors]
@@ -179,6 +186,10 @@ class POISEVAE(nn.Module):
                 Reconstruction loss for each dataset
             KL_loss: torch.Tensor
         """
+        batch_size = x[0].shape[0] if self.batch else 1
+        if batch_size != self._batch_size:
+            self.flag_initialize = 1 # for the last batch whose size is often different
+        
         mu, var = self.encode(x)
         
         g22 = -torch.exp(self.g22)
@@ -187,7 +198,11 @@ class POISEVAE(nn.Module):
         if self.flag_initialize == 1:
             self._init_gibbs(g22, mu, var) # self.z_priors and .z_posteriors are now init.ed
         # Actual sampling
+        # try:
         z_gibbs_priors, z_gibbs_posteriors = self._sampling(g22, mu, var, n_iterations=5)
+        # except RuntimeError:
+        #     print(mu[0].shape, var[0].shape, self.g11.shape, x[0].shape)
+        #     print(mu[1].shape, var[1].shape, self.g11.shape, x[1].shape)
 
         x_ = self.decode(z_gibbs_posteriors) # Decoding
 

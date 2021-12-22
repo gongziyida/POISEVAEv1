@@ -6,9 +6,8 @@ _device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 class KLD():
     __version__ = 1.0
     
-    def __init__(self, latent_dims, batch_size, device=_device):
+    def __init__(self, latent_dims, device=_device):
         self.latent_dims = latent_dims
-        self.batch_size = batch_size
         self.device = device
 
     def calc(self, G, z, z_priors, mu, var):
@@ -20,19 +19,23 @@ class KLD():
             lambdas.append(torch.cat((mu_i,var_i),1))
             
         # TODO: make it generic for > 2 latent spaces
+        batch_size = z[0].shape[0]
+        if z[1].shape[0] != batch_size:
+            raise ValueError('Batch size must match.')
+        
         T_prior_sqrd = torch.sum(torch.square(z_priors[0]), 1) + \
                        torch.sum(torch.square(z_priors[1]), 1) #stores z^2+z'^2
         T_post_sqrd  = torch.sum(torch.square(z[0]), 1) + \
                        torch.sum(torch.square(z[1]), 1)
-        T1_prior_unsq = T_priors[0].unsqueeze(2)       
-        T2_prior_unsq = T_priors[1].unsqueeze(1)       
-        T1_post_unsq  = T_posts[0].unsqueeze(2)        
-        T2_post_unsq  = T_posts[1].unsqueeze(1)        
-        T_prior_kron = torch.zeros(self.batch_size, 2 * self.latent_dims[0], 
+        T1_prior_unsq = T_priors[0].unsqueeze(2)
+        T2_prior_unsq = T_priors[1].unsqueeze(1)
+        T1_post_unsq  = T_posts[0].unsqueeze(2) 
+        T2_post_unsq  = T_posts[1].unsqueeze(1)
+        T_prior_kron = torch.zeros(batch_size, 2 * self.latent_dims[0], 
                                    2 * self.latent_dims[1]).to(self.device)
         T_post_kron = torch.zeros(T_prior_kron.shape).to(self.device)
        
-        for i in range(self.batch_size):
+        for i in range(batch_size):
             T_prior_kron[i,:] = torch.kron(T1_prior_unsq[i,:], T2_prior_unsq[i,:])
             T_post_kron[i,:] = torch.kron(T1_post_unsq[i,:], T2_post_unsq[i,:])    
             
