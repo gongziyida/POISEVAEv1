@@ -24,7 +24,7 @@ def _latent_dims_type_setter(lds):
 
 
 class POISEVAE(nn.Module):
-    __version__ = 3.0
+    __version__ = 4.0
     
     def __init__(self, encoders, decoders, loss, latent_dims=None, batch=True,
                  device=_device):
