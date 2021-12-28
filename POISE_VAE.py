@@ -23,10 +23,21 @@ def _latent_dims_type_setter(lds):
     return ret, ret_flatten
 
 
+def _loss_func_type_setter(loss_funcs, num):
+    if callable(loss_funcs):
+        ret = [loss_funcs] * num
+    elif hasattr(loss_funcs, '__iter__'):
+        if len(loss_funcs) != num:
+            raise ValueError('Unmatched number of loss functions and datasets')
+        ret = loss_funcs
+    else:
+        raise TypeError('`loss_funcs` must be a function or list of functions.')
+    return ret
+
 class POISEVAE(nn.Module):
-    __version__ = 4.0
+    __version__ = 5.0
     
-    def __init__(self, encoders, decoders, loss, latent_dims=None, batch=True,
+    def __init__(self, encoders, decoders, loss_funcs, latent_dims=None, batch=True,
                  device=_device):
         """
         Parameters
@@ -42,9 +53,8 @@ class POISEVAE(nn.Module):
         decoders: list of nn.Module
             The number and indices of decoders must match those of encoders.
         
-        loss: str
-            Can either be 'MSE' for MSE loss or 'BCE' for BCE loss. The users should properly 
-            restrict the range of the output of their decoders for the loss chosen.
+        loss_funcs: function or list of functions
+            The users should properly restrict the range of the output of their decoders for the loss chosen.
         
         latent_dims: iterable, optional; default None
             The dimensions of the latent spaces to which the encoders encode. The indices of the 
@@ -77,13 +87,13 @@ class POISEVAE(nn.Module):
         else:
             self.latent_dims = tuple(map(lambda l: l.latent_dim, encoders))
         self.latent_dims, self.latent_dims_flatten = _latent_dims_type_setter(self.latent_dims)
+        
+        self.M = len(latent_dims)
 
         self.batch = batch
         self._batch_size = -1 # init
-        
-        if loss not in ['MSE', 'BCE']: 
-            raise NotImplementedError('Not yet supported for other loss functions')
-        self.loss = loss
+            
+        self.loss = _loss_func_type_setter(loss_funcs, self.M)
         
         self.encoders = nn.ModuleList(encoders)
         self.decoders = nn.ModuleList(decoders)
@@ -168,6 +178,16 @@ class POISEVAE(nn.Module):
         
         return z_gibbs_priors, z_gibbs_posteriors
         
+    def _loss_func(self, reduction='sum'):
+        if self.loss == 'MSE':
+            return nn.MSELoss(reduction=reduction)
+        elif self.loss == 'BCE':
+            return nn.BCLoss(reduction=reduction)
+        elif self.loss == 'CE':
+            return nn.CrossEntropyLoss(reduction=reduction)
+        else:
+            raise NotImplementedError
+            
     def forward(self, x):
         """
         Return
@@ -205,7 +225,7 @@ class POISEVAE(nn.Module):
         #     print(mu[1].shape, var[1].shape, self.g11.shape, x[1].shape)
 
         x_ = self.decode(z_gibbs_posteriors) # Decoding
-
+        
         G = torch.block_diag(self.g11, g22)
 
         # KL loss
@@ -213,9 +233,7 @@ class POISEVAE(nn.Module):
         KL_loss  = sum(kls)
 
         # Reconstruction loss
-        rec_loss_func = nn.MSELoss(reduction='sum') if self.loss == 'MSE' else \
-                        nn.BCELoss(reduction='sum')
-        recs = list(map(lambda x: rec_loss_func(x[0], x[1]), zip(x_, x)))
+        recs = [loss_func(x_[i], x[i]) for i, loss_func in enumerate(self.loss)]
         rec_loss = sum(recs)
         
         # Total loss
