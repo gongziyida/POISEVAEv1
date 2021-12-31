@@ -230,11 +230,11 @@ class POISEVAE(nn.Module):
 
         # KL loss
         kls = self.kl_div.calc(G, z_gibbs_posteriors, z_gibbs_priors, mu,var)
-        KL_loss  = sum(kls)
+        KL_loss  = torch.sum(torch.stack(kls))
 
         # Reconstruction loss
         recs = [loss_func(x_[i], x[i]) for i, loss_func in enumerate(self.loss)]
-        rec_loss = sum(recs)
+        rec_loss = torch.sum(torch.stack(recs))
         
         # Total loss
         total_loss = KL_loss + rec_loss
