@@ -55,7 +55,7 @@ class MNIST_SVHN(torch.utils.data.Dataset):
         
         svhn_target = self.svhn_targets[idx]
         # What are the indices in SVHN that 
-        return mnist_img/255, svhn_img/255, mnist_target, svhn_target
+        return mnist_img.view(-1)/255, svhn_img/255, mnist_target, svhn_target
 
     
 class CUB(torch.utils.data.Dataset):
@@ -70,7 +70,7 @@ class CUB(torch.utils.data.Dataset):
         return len(self.CUBtxt)
     
     def __getitem__(self, idx):
-        txt = self.CUBtxt.__getitem__(idx)
+        txt = self.CUBtxt.__getitem__(idx)[0]
         img = self.CUBimg.__getitem__(idx // 10)
         if self.return_idx:
             return img, txt, idx
