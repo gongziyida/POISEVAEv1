@@ -4,7 +4,7 @@ import torch.nn as nn
 _device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class GibbsSampler():
-    __version__ = 2.0
+    __version__ = 2.1 # Fix the corner case where latent dim == 1 (line 55 - 60)
     
     def __init__(self, latent_dims, device=_device):
         self.latent_dims = latent_dims
@@ -52,8 +52,13 @@ class GibbsSampler():
         if z is None:
             if batch_size is None:
                 raise RuntimeError('batch_size must be specified if z is not given.')
-            z = [torch.randn(batch_size, ld).squeeze().to(self.device) 
-                 for ld in self.latent_dims]
+            z = []
+            for ld in self.latent_dims:
+                if ld == 1:
+                    z.append(torch.randn(batch_size, ld).to(self.device))
+                else:
+                    z.append(torch.randn(batch_size, ld).squeeze().to(self.device))
+                    
         if lambda1s is None:
             lambda1s = [None for _ in range(len(self.latent_dims))]
         if lambda2s is None:
