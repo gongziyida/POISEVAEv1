@@ -9,7 +9,7 @@ class KLD():
     def __init__(self, latent_dims, device=_device):
         self.latent_dims = latent_dims
         self.device = device
-
+        
     def calc(self, G, z, z_priors, mu, var):
         ## Creating Sufficient statistics
         T_priors, T_posts, lambdas = [], [], []
@@ -45,7 +45,6 @@ class KLD():
                      self.dot_product(lambdas[1], T_posts[1].detach()) #-lambda*Tq-lambda'Tq'    
         part_fun2 = self.dot_product(T_prior_kron.detach(), G) - \
                     self.dot_product(T_post_kron.detach(), G)
-
         return part_fun0, part_fun1, part_fun2
     
     def dot_product(self, tensor_1, tensor_2):

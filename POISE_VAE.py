@@ -157,6 +157,13 @@ class POISEVAE(nn.Module):
                                      n_iterations=n_iterations, batch_size=batch_size)
         z_posteriors = self.gibbs.sample(self.g11, g22, lambda1s=mu, lambda2s=var,
                                          n_iterations=n_iterations, batch_size=batch_size)
+        # z_priors = self.gibbs.sample(1, torch.zeros_like(mu[0]), torch.zeros_like(mu[1]),
+        #                              self.g11, g22, 
+        #                              torch.zeros_like(mu[0]), torch.zeros_like(mu[1]),
+        #                              torch.zeros_like(var[0]), torch.zeros_like(var[1]),
+        #                              5000, batch_size)
+        # z_posteriors = self.gibbs.sample(1, torch.zeros_like(mu[0]), torch.zeros_like(mu[1]),
+        #                                  self.g11, g22, *mu, *var, 5000, batch_size)
 
         self.z_priors = z_priors
         self.z_posteriors = z_posteriors
@@ -170,6 +177,12 @@ class POISEVAE(nn.Module):
 
         z_gibbs_posteriors = self.gibbs.sample(self.g11, g22, lambda1s=mu, lambda2s=var,
                                                z=z_posteriors, n_iterations=n_iterations)
+        # z_gibbs_priors = self.gibbs.sample(0, *z_priors, self.g11, g22, 
+        #                                    torch.zeros_like(mu[0]), torch.zeros_like(mu[1]),
+        #                                    torch.zeros_like(var[0]), torch.zeros_like(var[1]),
+        #                                    5, self._batch_size)
+        # z_gibbs_posteriors = self.gibbs.sample(0, *z_posteriors, self.g11, g22, 
+        #                                        *mu, *var, 5, self._batch_size)
 
 
         # For calculating the loss and future use
@@ -218,18 +231,14 @@ class POISEVAE(nn.Module):
         if self.flag_initialize == 1:
             self._init_gibbs(g22, mu, var) # self.z_priors and .z_posteriors are now init.ed
         # Actual sampling
-        # try:
         z_gibbs_priors, z_gibbs_posteriors = self._sampling(g22, mu, var, n_iterations=5)
-        # except RuntimeError:
-        #     print(mu[0].shape, var[0].shape, self.g11.shape, x[0].shape)
-        #     print(mu[1].shape, var[1].shape, self.g11.shape, x[1].shape)
 
         x_ = self.decode(z_gibbs_posteriors) # Decoding
         
         G = torch.block_diag(self.g11, g22)
 
         # KL loss
-        kls = self.kl_div.calc(G, z_gibbs_posteriors, z_gibbs_priors, mu,var)
+        kls = self.kl_div.calc(G, z_gibbs_posteriors, z_gibbs_priors, mu, var)
         KL_loss  = torch.sum(torch.stack(kls))
 
         # Reconstruction loss

@@ -1,4 +1,5 @@
 # Version: 1.0
+import os
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -56,9 +57,6 @@ def train(model, joint_dataloader, optimizer, epoch, record_idx=(), return_laten
         optimizer.zero_grad()
         
         results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
-        # z_posterior, mu, var = results['z'], results['mu'], results['var']
-        # reconstruction = results['x_rec']
-        # total_loss, rec_loss, KLD = results['total_loss'], results['rec_losses'], results['KL_loss']
         
         for i, val in enumerate(results['rec_losses']):
             running_recs[i] += val.item()
