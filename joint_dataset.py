@@ -1,3 +1,4 @@
+import os
 import torch
 import scipy.io as sio
 import random
@@ -7,33 +8,70 @@ from itertools import product
 
 from CUBDatasets import CUBSentences, CUBImageFt
 
-class MNIST_SVHN(torch.utils.data.Dataset):
-    def __init__(self, mnist_pt_path, svhn_mat_path):
+def _rand_match_on_idx(l1, idx1, l2, idx2, max_d=10000, dm=10):
+# The code is adapted from https://github.com/iffsid/mmvae, the repository for the work
+# Y. Shi, N. Siddharth, B. Paige and PHS. Torr.
+# Variational Mixture-of-Experts Autoencoders for Multi-Modal Deep Generative Models.
+# In Proceedings of the 33rd International Conference on Neural Information Processing Systems,
+# Page 15718–15729, 2019
+    """
+    l*: sorted labels
+    idx*: indices of sorted labels in original list
+    """
+    _idx1, _idx2 = [], []
+    for l in l1.unique():  # assuming both have same idxs
+        l_idx1, l_idx2 = idx1[l1 == l], idx2[l2 == l]
+        n = min(l_idx1.size(0), l_idx2.size(0), max_d)
+        l_idx1, l_idx2 = l_idx1[:n], l_idx2[:n]
+        for _ in range(dm):
+            _idx1.append(l_idx1[torch.randperm(n)])
+            _idx2.append(l_idx2[torch.randperm(n)])
+    return torch.cat(_idx1), torch.cat(_idx2)
 
-        self.mnist_pt_path = mnist_pt_path
-        self.svhn_mat_path = svhn_mat_path
+def MNIST_SVHN_augment(MNIST_PATH, SVHN_PATH, max_d=10000, dm=20):
+    """
+    max_d: int, default 10000
+        Maximum number of datapoints per class
+    dm: int, default 20
+        Data multiplier: random permutations to match
+    """
+    mnist = torch.load(MNIST_PATH)
+    svhn = sio.loadmat(SVHN_PATH)
+
+    svhn['y'] = torch.LongTensor(svhn['y'].squeeze().astype(int)) % 10
+    
+    mnist_l, mnist_li = mnist[1].sort()
+    svhn_l, svhn_li = svhn['y'].sort()
+    idx_mnist, idx_svhn = _rand_match_on_idx(mnist_l, mnist_li, svhn_l, svhn_li, max_d=max_d, dm=dm)
+    torch.save(idx_mnist, os.path.join(os.path.dirname(MNIST_PATH), 'ms-mnist-idx.pt'))
+    torch.save(idx_svhn, os.path.join(os.path.dirname(SVHN_PATH), 'ms-svhn-idx.pt'))
+    
+    return idx_mnist, idx_svhn
+
+
+class MNIST_SVHN(torch.utils.data.Dataset):
+    def __init__(self, mnist_pt_path, svhn_mat_path, sampler_mnist=None, sampler_svhn=None):
+        self.mnist_pt_path, self.svhn_mat_path = mnist_pt_path, svhn_mat_path
+        self.sampler_mnist, self.sampler_svhn = sampler_mnist, sampler_svhn
             
         # Load the pt for MNIST and mat for SVHN 
         self.mnist_data, self.mnist_targets = torch.load(self.mnist_pt_path)
         
         # Reading the SVHN data
         svhn_mat_info = sio.loadmat(self.svhn_mat_path)
-
         self.svhn_data = svhn_mat_info['X']
-        
-        self.svhn_targets = svhn_mat_info['y'].astype(np.int64).squeeze()
-
-        
         # the svhn dataset assigns the class label "10" to the digit 0
-        # this makes it inconsistent with several loss functions
-        # which expect the class labels to be in the range [0, C-1]
-        np.place(self.svhn_targets, self.svhn_targets == 10, 0)
+        self.svhn_targets = svhn_mat_info['y'].astype(np.int64).squeeze() % 10
         self.svhn_data = np.transpose(self.svhn_data, (3, 2, 0, 1))
         
-        # Now we have the svhn data and the SVHN Labels, for each index get the classes
-        self.svhn_target_idx_mapping = self.process_svhn_labels()
+        if sampler_mnist is None:
+            # Now we have the svhn data and the SVHN Labels, for each index get the classes
+            self.svhn_target_idx_mapping = self._process_svhn_labels()
+            self.__len__ = lambda: len(self.mnist_data)
+        else:
+            self.__len__ = lambda: len(self.sampler_mnist)
         
-    def process_svhn_labels(self):
+    def _process_svhn_labels(self):
         numbers_dict = {0: [], 1: [], 2: [], 3:[], 4:[], 5:[], 6:[], 7: [], 8:[], 9:[]}
         for i in range(len(self.svhn_targets)):
             svhn_target = self.svhn_targets[i]
@@ -41,24 +79,29 @@ class MNIST_SVHN(torch.utils.data.Dataset):
         return numbers_dict
         
     def __len__(self):
-        return len(self.mnist_data)
+        if self.sampler_mnist is None:
+            return len(self.mnist_data)
+        else:
+            return len(self.sampler_mnist)
         
-    def __getitem__(self, index: int):
-        """
-        Args:
-            index (int): Index
-        """
-        mnist_img, mnist_target = self.mnist_data[index], int(self.mnist_targets[index])
-        indices_list = self.svhn_target_idx_mapping[mnist_target]
-        
-        # Randomly pick an index from the indices list
-        idx = random.choice(indices_list)
-        svhn_img = self.svhn_data[idx]
-        
-        svhn_target = self.svhn_targets[idx]
-        # What are the indices in SVHN that 
-        return mnist_img.view(-1)/255, svhn_img/255, mnist_target, svhn_target
+    def __getitem__(self, index):
+        if self.sampler_mnist is None:
+            mnist_img, mnist_target = self.mnist_data[index], int(self.mnist_targets[index])
+            indices_list = self.svhn_target_idx_mapping[mnist_target]
 
+            # Randomly pick an index from the indices list
+            idx = random.choice(indices_list)
+            svhn_img = self.svhn_data[idx]
+            svhn_target = self.svhn_targets[idx]
+        else:
+            mnist_img = self.mnist_data[self.sampler_mnist[index]]
+            mnist_target = int(self.mnist_targets[self.sampler_mnist[index]])
+
+            svhn_img = self.svhn_data[self.sampler_svhn[index]]
+            svhn_target = int(self.svhn_targets[self.sampler_svhn[index]])
+
+        return mnist_img.view(-1)/255, svhn_img/255, mnist_target, svhn_target
+    
     
 class MNIST_GM(torch.utils.data.Dataset):
     def __init__(self, mnist_pt_path, sample_size=800):
