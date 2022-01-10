@@ -6,7 +6,7 @@ import numpy as np
 from torch.distributions import multivariate_normal as mv
 from itertools import product
 
-from CUBDatasets import CUBSentences, CUBImageFt
+from .CUBDatasets import CUBSentences, CUBImageFt
 
 def _rand_match_on_idx(l1, idx1, l2, idx2, max_d=10000, dm=10):
 # The code is adapted from https://github.com/iffsid/mmvae, the repository for the work
@@ -28,7 +28,7 @@ def _rand_match_on_idx(l1, idx1, l2, idx2, max_d=10000, dm=10):
             _idx2.append(l_idx2[torch.randperm(n)])
     return torch.cat(_idx1), torch.cat(_idx2)
 
-def MNIST_SVHN_augment(MNIST_PATH, SVHN_PATH, max_d=10000, dm=20):
+def augment_MNIST_SVHN(MNIST_PATH, SVHN_PATH, fname_MNIST_idx, fname_SVHN_idx, max_d=10000, dm=20):
     """
     max_d: int, default 10000
         Maximum number of datapoints per class
@@ -43,8 +43,8 @@ def MNIST_SVHN_augment(MNIST_PATH, SVHN_PATH, max_d=10000, dm=20):
     mnist_l, mnist_li = mnist[1].sort()
     svhn_l, svhn_li = svhn['y'].sort()
     idx_mnist, idx_svhn = _rand_match_on_idx(mnist_l, mnist_li, svhn_l, svhn_li, max_d=max_d, dm=dm)
-    torch.save(idx_mnist, os.path.join(os.path.dirname(MNIST_PATH), 'ms-mnist-idx.pt'))
-    torch.save(idx_svhn, os.path.join(os.path.dirname(SVHN_PATH), 'ms-svhn-idx.pt'))
+    torch.save(idx_mnist, os.path.join(os.path.dirname(MNIST_PATH), fname_MNIST_idx + '.pt'))
+    torch.save(idx_svhn, os.path.join(os.path.dirname(SVHN_PATH), fname_SVHN_idx + '.pt'))
     
     return idx_mnist, idx_svhn
 
