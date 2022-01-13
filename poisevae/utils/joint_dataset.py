@@ -104,7 +104,7 @@ class MNIST_SVHN(torch.utils.data.Dataset):
     
     
 class MNIST_GM(torch.utils.data.Dataset):
-    def __init__(self, mnist_pt_path, sample_size=800):
+    def __init__(self, mnist_pt_path, sample_size=800, var=1/400, radius=1):
 
         self.mnist_pt_path = mnist_pt_path
             
@@ -114,13 +114,11 @@ class MNIST_GM(torch.utils.data.Dataset):
         self.mnist_targets = self.mnist_targets[(self.mnist_targets!=0)&(self.mnist_targets!=9)]
         
         # Generate Gaussian mixtures
-        self.gm_var = 1 * torch.eye(2,dtype=torch.float32)
-        radius = 20
+        self.gm_var = var * torch.eye(2,dtype=torch.float32)
         angles = np.pi * np.arange(8) / 4
         self.gm_locs = np.array([[radius * np.cos(a), radius * np.sin(a)] for a in angles])
         self.gms = [mv.MultivariateNormal(torch.tensor(mu, dtype=torch.float32), self.gm_var) for mu in self.gm_locs]
         self.gm_data = torch.cat([d.sample((sample_size, )) for d in self.gms], dim=0)
-        self.gm_data = (self.gm_data - self.gm_data.mean(dim=0)) / self.gm_data.std(dim=0)
         self.gm_targets = np.repeat(np.arange(1, 9, dtype=np.int32), sample_size)
         
         self.gauss_target_idx_mapping = self.process_gauss_labels()
