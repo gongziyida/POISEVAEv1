@@ -6,7 +6,14 @@ from tqdm import tqdm
 
 _device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-def train(model, joint_dataloader, optimizer, epoch, record_idx=(), return_latents=False, progress_bar=False, 
+def _log(results, mode, writer, epoch):
+    for i, val in enumerate(results['rec_losses']):
+        writer.add_scalars('%s/loss/rec%d' % (mode, i), {'rec': val.item()}, epoch)
+    writer.add_scalars('%s/loss/kld' % mode, {'kld': results['KL_loss'].item()}, epoch)
+    writer.add_scalars('%s/loss/total' % mode, {'total': results['total_loss'].item()}, epoch)
+
+
+def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), return_latents=False, progress_bar=False, 
           device=_device, dtype=torch.float32):
     '''
     Parameters
@@ -33,12 +40,6 @@ def train(model, joint_dataloader, optimizer, epoch, record_idx=(), return_laten
     
     Returns
     -------
-    loss: float
-        Total loss
-    rec_loss1, rec_loss2, ...: floats
-        Reconstruction losses for different modalities
-    kld_loss: float
-        KL loss
     record: list, available if `record_idx` is not empty
         Data loaded, see above
     latent_info: dict, available if `return_latents` is True
@@ -51,35 +52,26 @@ def train(model, joint_dataloader, optimizer, epoch, record_idx=(), return_laten
                'var': [[] for _ in range(model.M)]}
     
     model.train()
-    running_total, running_recs, running_kld  = 0, np.zeros(model.M), 0
     
-    for i, data in enumerate(tqdm(joint_dataloader, disable=not progress_bar)):
+    for k, data in tqdm(enumerate(joint_dataloader), disable=not progress_bar):
         optimizer.zero_grad()
         
         results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
-        
-        for i, val in enumerate(results['rec_losses']):
-            running_recs[i] += val.item()
-        running_kld  += results['KL_loss'].item()
-        running_total += results['total_loss'].item()
-
         results['total_loss'].backward() 
         optimizer.step()
+        _log(results, 'train', writer, epoch * len(joint_dataloader) + k)
         
         if return_latents:
-                for i in range(model.M):
-                    returns['latent'][i].append(results['z'][i].cpu().numpy())
-                    returns['mu'][i].append(results['mu'][i].cpu().numpy())
-                    returns['var'][i].append(results['var'][i].cpu().numpy())
+            for i in range(model.M):
+                returns['latent'][i].append(results['z'][i].cpu().numpy())
+                returns['mu'][i].append(results['mu'][i].cpu().numpy())
+                returns['var'][i].append(results['var'][i].cpu().numpy())
                     
         for i, j in enumerate(record_idx): # Does not iterate if empty
             record[i].append(data[j])
         
-    train_loss = running_total / (len(joint_dataloader.dataset))
-    rec_losses = running_recs / (len(joint_dataloader.dataset))
-    kld_loss = running_kld / (len(joint_dataloader.dataset))
     
-    ret_buffer = [train_loss, *rec_losses, kld_loss]
+    ret_buffer = []
     if len(record_idx) > 0:
         ret_buffer.append(record)
     if return_latents:
@@ -88,7 +80,7 @@ def train(model, joint_dataloader, optimizer, epoch, record_idx=(), return_laten
 
 
 
-def test(model, joint_dataloader, epoch, record_idx=(), return_latents=False, progress_bar=False, 
+def test(model, joint_dataloader, epoch, writer, record_idx=(), return_latents=False, progress_bar=False, 
          device=_device, dtype=torch.float32):
     '''
     Parameters
@@ -115,12 +107,6 @@ def test(model, joint_dataloader, epoch, record_idx=(), return_latents=False, pr
     
     Returns
     -------
-    loss: float
-        Total loss
-    rec_loss1, rec_loss2, ...: floats
-        Reconstruction losses for different modalities
-    kld_loss: float
-        KL loss
     record: list, available if `record_idx` is not empty
         Data loaded, see above
     latent_info: dict, available if `return_latents` is True
@@ -133,16 +119,12 @@ def test(model, joint_dataloader, epoch, record_idx=(), return_latents=False, pr
                'var': [[] for _ in range(model.M)]}
     
     model.eval()
-    running_total, running_recs, running_kld  = 0, np.zeros(model.M), 0
     
     with torch.no_grad():
-        for i, data in enumerate(tqdm(joint_dataloader, disable=not progress_bar)):
+        for k, data in tqdm(enumerate(joint_dataloader), disable=not progress_bar):
             results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
 
-            for i, val in enumerate(results['rec_losses']):
-                running_recs[i] += val.item()
-            running_kld  += results['KL_loss'].item()
-            running_total += results['total_loss'].item()
+            _log(results, 'test', writer, epoch * len(joint_dataloader) + k)
             
             if return_latents:
                 for i in range(model.M):
@@ -153,11 +135,7 @@ def test(model, joint_dataloader, epoch, record_idx=(), return_latents=False, pr
             for i, j in enumerate(record_idx): # Does not iterate if empty
                 record[i].append(data[j])
             
-    train_loss = running_total / (len(joint_dataloader.dataset))
-    rec_losses = running_recs / (len(joint_dataloader.dataset))
-    kld_loss = running_kld / (len(joint_dataloader.dataset))
-    
-    ret_buffer = [train_loss, *rec_losses, kld_loss]
+    ret_buffer = []
     if len(record_idx) > 0:
         ret_buffer.append(record)
     if return_latents:
@@ -189,3 +167,45 @@ def load_checkpoint(model, optimizer, load_path):
     epoch = checkpoint['epoch']
     
     return model, optimizer, epoch
+
+
+# The code is adapted from https://github.com/iffsid/mmvae, the repository for the work
+# Y. Shi, N. Siddharth, B. Paige and PHS. Torr.
+# Variational Mixture-of-Experts Autoencoders for Multi-Modal Deep Generative Models.
+# In Proceedings of the 33rd International Conference on Neural Information Processing Systems,
+# Page 15718–15729, 2019
+
+def pdist(sample_1, sample_2, eps=1e-8):
+    """Compute the matrix of all squared pairwise distances. Code
+    adapted from the torch-two-sample library (added batching).
+    You can find the original implementation of this function here:
+    https://github.com/josipd/torch-two-sample/blob/master/torch_two_sample/util.py
+    Arguments
+    ---------
+    sample_1 : torch.Tensor or Variable
+        The first sample, should be of shape ``(batch_size, n_1, d)``.
+    sample_2 : torch.Tensor or Variable
+        The second sample, should be of shape ``(batch_size, n_2, d)``.
+    norm : float
+        The l_p norm to be used.
+    batched : bool
+        whether data is batched
+    Returns
+    -------
+    torch.Tensor or Variable
+        Matrix of shape (batch_size, n_1, n_2). The [i, j]-th entry is equal to
+        ``|| sample_1[i, :] - sample_2[j, :] ||_p``."""
+    if len(sample_1.shape) == 2:
+        sample_1, sample_2 = sample_1.unsqueeze(0), sample_2.unsqueeze(0)
+    B, n_1, n_2 = sample_1.size(0), sample_1.size(1), sample_2.size(1)
+    norms_1 = torch.sum(sample_1 ** 2, dim=-1, keepdim=True)
+    norms_2 = torch.sum(sample_2 ** 2, dim=-1, keepdim=True)
+    norms = (norms_1.expand(B, n_1, n_2)
+             + norms_2.transpose(1, 2).expand(B, n_1, n_2))
+    distances_squared = norms - 2 * sample_1.matmul(sample_2.transpose(1, 2))
+    return torch.sqrt(eps + torch.abs(distances_squared)).squeeze()  # batch x K x latent
+
+
+def NN_lookup(emb_h, emb):
+    dist = pdist(emb.to(emb_h.device), emb_h)
+    return dist, dist.argmin(dim=0)

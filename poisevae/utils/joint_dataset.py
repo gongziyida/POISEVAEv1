@@ -104,7 +104,7 @@ class MNIST_SVHN(torch.utils.data.Dataset):
     
     
 class MNIST_GM(torch.utils.data.Dataset):
-    def __init__(self, mnist_pt_path, sample_size=800, var=1/400, radius=1):
+    def __init__(self, mnist_pt_path, sample_size=800, var=1/400, radius=1, data_augment=10):
 
         self.mnist_pt_path = mnist_pt_path
             
@@ -123,6 +123,8 @@ class MNIST_GM(torch.utils.data.Dataset):
         
         self.gauss_target_idx_mapping = self.process_gauss_labels()
         
+        self.data_augment = data_augment
+        
     def process_gauss_labels(self):
         numbers_dict = { 1: [], 2: [], 3:[], 4:[], 5:[], 6:[], 7: [], 8:[]}
         for i in range(len(self.gm_targets)):
@@ -131,16 +133,17 @@ class MNIST_GM(torch.utils.data.Dataset):
         return numbers_dict
     
     def __len__(self):
-        return len(self.mnist_data)
+        return len(self.mnist_data) * self.data_augment
     
-    def __getitem__(self, index: int):
+    def __getitem__(self, index):
         """
         Args:
             index (int): Index
             Modality 1: 1-8 MNIST
             Modality 2: 8 Gaussian distributions
         """
-        mnist_img, mnist_target = self.mnist_data[index], int(self.mnist_targets[index])
+        idx_mnist = int(np.floor(index / self.data_augment))
+        mnist_img, mnist_target = self.mnist_data[idx_mnist], int(self.mnist_targets[idx_mnist])
         indices_list = self.gauss_target_idx_mapping[mnist_target]
         
         # Randomly pick an index from the indices list
