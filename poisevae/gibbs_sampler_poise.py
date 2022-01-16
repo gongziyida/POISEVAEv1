@@ -3,7 +3,7 @@ import torch.nn as nn
 
 _device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-class GibbsSampler():
+class GibbsSampler:
     __version__ = 2.1 # Fix the corner case where latent dim == 1 (line 55 - 60)
     
     def __init__(self, latent_dims, device=_device):
@@ -69,7 +69,7 @@ class GibbsSampler():
         return z
 
     
-class GibbsSamplerOld():
+class GibbsSamplerOld:
     def __init__(self,latent_dims):
         self.latent_dims = latent_dims
         

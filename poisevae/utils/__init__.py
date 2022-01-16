@@ -1,2 +1,1 @@
-from .functions import train, test, save_latent_info, save_checkpoint, load_checkpoint, pdist, NN_lookup
-from .joint_dataset import augment_MNIST_SVHN, CUB, MNIST_GM, MNIST_SVHN
+from .functions import train, test, save_latent_info, save_checkpoint, load_checkpoint, pdist, NN_lookup, augment_MNIST_SVHN

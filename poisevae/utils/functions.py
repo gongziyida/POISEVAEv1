@@ -1,8 +1,8 @@
 # Version: 1.0
 import os
 import numpy as np
+import scipy.io as sio
 import torch
-from tqdm import tqdm
 
 _device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -13,7 +13,7 @@ def _log(results, mode, writer, epoch):
     writer.add_scalars('%s/loss/total' % mode, {'total': results['total_loss'].item()}, epoch)
 
 
-def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), return_latents=False, progress_bar=False, 
+def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), return_latents=False,
           device=_device, dtype=torch.float32):
     '''
     Parameters
@@ -35,9 +35,6 @@ def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), retu
     return_latents: bool, optional
         If true, return a dict containing the latent representation, mean, and variance.
     
-    progress_bar: bool, optional
-        If true, displace training progress bar
-    
     Returns
     -------
     record: list, available if `record_idx` is not empty
@@ -53,7 +50,7 @@ def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), retu
     
     model.train()
     
-    for k, data in tqdm(enumerate(joint_dataloader), disable=not progress_bar):
+    for k, data in enumerate(joint_dataloader):
         optimizer.zero_grad()
         
         results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
@@ -80,7 +77,7 @@ def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), retu
 
 
 
-def test(model, joint_dataloader, epoch, writer, record_idx=(), return_latents=False, progress_bar=False, 
+def test(model, joint_dataloader, epoch, writer, record_idx=(), return_latents=False,
          device=_device, dtype=torch.float32):
     '''
     Parameters
@@ -102,9 +99,6 @@ def test(model, joint_dataloader, epoch, writer, record_idx=(), return_latents=F
     return_latents: bool, optional
         If true, return a dict containing the latent representation, mean, and variance.
     
-    progress_bar: bool, optional
-        If true, displace training progress bar
-    
     Returns
     -------
     record: list, available if `record_idx` is not empty
@@ -121,7 +115,7 @@ def test(model, joint_dataloader, epoch, writer, record_idx=(), return_latents=F
     model.eval()
     
     with torch.no_grad():
-        for k, data in tqdm(enumerate(joint_dataloader), disable=not progress_bar):
+        for k, data in enumerate(joint_dataloader):
             results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
 
             _log(results, 'test', writer, epoch * len(joint_dataloader) + k)
@@ -209,3 +203,44 @@ def pdist(sample_1, sample_2, eps=1e-8):
 def NN_lookup(emb_h, emb):
     dist = pdist(emb.to(emb_h.device), emb_h)
     return dist, dist.argmin(dim=0)
+
+
+def _rand_match_on_idx(l1, idx1, l2, idx2, max_d=10000, dm=10):
+# The code is adapted from https://github.com/iffsid/mmvae, the repository for the work
+# Y. Shi, N. Siddharth, B. Paige and PHS. Torr.
+# Variational Mixture-of-Experts Autoencoders for Multi-Modal Deep Generative Models.
+# In Proceedings of the 33rd International Conference on Neural Information Processing Systems,
+# Page 15718–15729, 2019
+    """
+    l*: sorted labels
+    idx*: indices of sorted labels in original list
+    """
+    _idx1, _idx2 = [], []
+    for l in l1.unique():  # assuming both have same idxs
+        l_idx1, l_idx2 = idx1[l1 == l], idx2[l2 == l]
+        n = min(l_idx1.size(0), l_idx2.size(0), max_d)
+        l_idx1, l_idx2 = l_idx1[:n], l_idx2[:n]
+        for _ in range(dm):
+            _idx1.append(l_idx1[torch.randperm(n)])
+            _idx2.append(l_idx2[torch.randperm(n)])
+    return torch.cat(_idx1), torch.cat(_idx2)
+
+def augment_MNIST_SVHN(MNIST_PATH, SVHN_PATH, fname_MNIST_idx, fname_SVHN_idx, max_d=10000, dm=20):
+    """
+    max_d: int, default 10000
+        Maximum number of datapoints per class
+    dm: int, default 20
+        Data multiplier: random permutations to match
+    """
+    mnist = torch.load(MNIST_PATH)
+    svhn = sio.loadmat(SVHN_PATH)
+
+    svhn['y'] = torch.LongTensor(svhn['y'].squeeze().astype(int)) % 10
+    
+    mnist_l, mnist_li = mnist[1].sort()
+    svhn_l, svhn_li = svhn['y'].sort()
+    idx_mnist, idx_svhn = _rand_match_on_idx(mnist_l, mnist_li, svhn_l, svhn_li, max_d=max_d, dm=dm)
+    torch.save(idx_mnist, os.path.join(os.path.dirname(MNIST_PATH), fname_MNIST_idx + '.pt'))
+    torch.save(idx_svhn, os.path.join(os.path.dirname(SVHN_PATH), fname_SVHN_idx + '.pt'))
+    
+    return idx_mnist, idx_svhn

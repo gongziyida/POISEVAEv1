@@ -4,6 +4,8 @@ from .gibbs_sampler_poise import GibbsSampler
 from .kl_divergence_calculator import KLD
 from numpy import prod
 
+from time import time
+
 _device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def _latent_dims_type_setter(lds):
@@ -23,22 +25,23 @@ def _latent_dims_type_setter(lds):
     return ret, ret_flatten
 
 
-def _loss_func_type_setter(loss_funcs, num):
-    if callable(loss_funcs):
-        ret = [loss_funcs] * num
-    elif hasattr(loss_funcs, '__iter__'):
-        if len(loss_funcs) != num:
-            raise ValueError('Unmatched number of loss functions and datasets')
-        ret = loss_funcs
+def _func_type_setter(func, num, fname, concept):
+    if callable(func):
+        ret = [func] * num
+    elif hasattr(func, '__iter__'):
+        if len(func) != num:
+            raise ValueError('Unmatched number of %s and datasets' % concept)
+        ret = func
     else:
-        raise TypeError('`loss_funcs` must be a function or list of functions.')
+        raise TypeError('`%s` must be callable or list of callables.' % fname)
     return ret
 
+
 class POISEVAE(nn.Module):
-    __version__ = 5.0
+    __version__ = 6.0
     
-    def __init__(self, encoders, decoders, loss_funcs, latent_dims=None, batch=True,
-                 device=_device):
+    def __init__(self, encoders, decoders, loss_funcs=None, likelihoods=None, latent_dims=None, 
+                 rec_weights=None, reduction='mean', batched=True, device=_device):
         """
         Parameters
         ----------
@@ -53,14 +56,27 @@ class POISEVAE(nn.Module):
         decoders: list of nn.Module
             The number and indices of decoders must match those of encoders.
         
-        loss_funcs: function or list of functions
+        loss_funcs: function or list of functions; default None
             The users should properly restrict the range of the output of their decoders for the loss chosen.
+            If not given, `likelihoods` must be specified.
         
-        latent_dims: iterable, optional; default None
+        likelihoods: class or list of classes, optional; default None
+            The likelihood distributions. 
+            The class(es) given must take exactly the output of the corresponding decoders given, and
+            must contain `log_prob(target)` method to calculate the log probabilities. 
+            If given, `loss_funcs` will be ignored and the loss is calculated with log probabilities.
+        
+        latent_dims: iterable of int, optional; default None
             The dimensions of the latent spaces to which the encoders encode. The indices of the 
             entries must match those of encoders. An alternative way to specify the dimensions is
             to add the attribute `latent_dim` to each encoder (see above).
             Note that each entry must be unsqueezed, e.g. (10, ) is not the same as (10, 1).
+        
+        rec_weights: iterable of float, optional; default None
+            The weights of the reconstruction loss of each modality
+            
+        reduction: str, optional; default 'mean'
+            How to calculate the batch loss; either 'sum' or 'mean'
         
         batch: bool
             If the data is in batches
@@ -90,18 +106,30 @@ class POISEVAE(nn.Module):
         
         self.M = len(latent_dims)
 
-        self.batch = batch
+        self.batched = batched
         self._batch_size = -1 # init
             
-        self.loss = _loss_func_type_setter(loss_funcs, self.M)
+        if likelihoods is None:
+            self.loss = _func_type_setter(loss_funcs, self.M, 'loss_funcs', 'loss functions')
+        elif loss_funcs is None:
+            self.likelihoods = _func_type_setter(likelihoods, self.M, 
+                                                 'likelihoods', 'likelihood distributions')
+        else: 
+            raise ValueError('One of `loss_funcs` and `likelihoods` must be given.')
+        
+        self.rec_weights = rec_weights
         
         self.encoders = nn.ModuleList(encoders)
         self.decoders = nn.ModuleList(decoders)
         
         self.device = device
-
+        
+        if reduction not in ('mean', 'sum'):
+            raise ValueError('`reduction` must be either "mean" or "sum".')
+        self.reduction = reduction
+        
         self.gibbs = GibbsSampler(self.latent_dims_flatten)
-        self.kl_div = KLD(self.latent_dims_flatten)
+        self.kl_div = KLD(self.latent_dims_flatten, reduction=self.reduction)
 
         self.register_parameter(name='g11', 
                                 param=nn.Parameter(torch.randn(*self.latent_dims_flatten, 
@@ -109,6 +137,8 @@ class POISEVAE(nn.Module):
         self.register_parameter(name='g22', 
                                 param=nn.Parameter(torch.randn(*self.latent_dims_flatten, 
                                                                device=self.device)))
+        
+        
         self.flag_initialize = 1
     
     def encode(self, x):
@@ -122,9 +152,9 @@ class POISEVAE(nn.Module):
         z: list of torch.Tensor
         """
         mu, var = [], []
+        batch_size = x[0].shape[0] if self.batched else 1
         for i, xi in enumerate(x):
             _mu, _log_var = self.encoders[i](xi)
-            batch_size = xi.shape[0] if self.batch else 1
             mu.append(_mu.view(batch_size, -1))
             var.append(-torch.exp(_log_var.view(batch_size, -1)))
         return mu, var
@@ -140,8 +170,8 @@ class POISEVAE(nn.Module):
         x_rec: list of torch.Tensor
         """
         x_rec = []
+        batch_size = z[0].shape[0] if self.batched else 1
         for decoder, zi, ld in zip(self.decoders, z, self.latent_dims):
-            batch_size = zi.shape[0] if self.batch else 1
             zi = zi.view(batch_size, *ld) # Match the shape to the output
             x_ = decoder(zi)
             x_rec.append(x_)
@@ -151,19 +181,12 @@ class POISEVAE(nn.Module):
         """
         Initialize the starting points for Gibbs sampling
         """
-        batch_size = mu[0].shape[0] if self.batch else 1
+        batch_size = mu[0].shape[0] if self.batched else 1
         self._batch_size = batch_size
         z_priors = self.gibbs.sample(self.g11, g22, 
                                      n_iterations=n_iterations, batch_size=batch_size)
         z_posteriors = self.gibbs.sample(self.g11, g22, lambda1s=mu, lambda2s=var,
                                          n_iterations=n_iterations, batch_size=batch_size)
-        # z_priors = self.gibbs.sample(1, torch.zeros_like(mu[0]), torch.zeros_like(mu[1]),
-        #                              self.g11, g22, 
-        #                              torch.zeros_like(mu[0]), torch.zeros_like(mu[1]),
-        #                              torch.zeros_like(var[0]), torch.zeros_like(var[1]),
-        #                              5000, batch_size)
-        # z_posteriors = self.gibbs.sample(1, torch.zeros_like(mu[0]), torch.zeros_like(mu[1]),
-        #                                  self.g11, g22, *mu, *var, 5000, batch_size)
 
         self.z_priors = z_priors
         self.z_posteriors = z_posteriors
@@ -177,12 +200,6 @@ class POISEVAE(nn.Module):
 
         z_gibbs_posteriors = self.gibbs.sample(self.g11, g22, lambda1s=mu, lambda2s=var,
                                                z=z_posteriors, n_iterations=n_iterations)
-        # z_gibbs_priors = self.gibbs.sample(0, *z_priors, self.g11, g22, 
-        #                                    torch.zeros_like(mu[0]), torch.zeros_like(mu[1]),
-        #                                    torch.zeros_like(var[0]), torch.zeros_like(var[1]),
-        #                                    5, self._batch_size)
-        # z_gibbs_posteriors = self.gibbs.sample(0, *z_posteriors, self.g11, g22, 
-        #                                        *mu, *var, 5, self._batch_size)
 
 
         # For calculating the loss and future use
@@ -190,16 +207,6 @@ class POISEVAE(nn.Module):
         self.z_posteriors = [z.detach() for z in z_gibbs_posteriors]
         
         return z_gibbs_priors, z_gibbs_posteriors
-        
-    def _loss_func(self, reduction='sum'):
-        if self.loss == 'MSE':
-            return nn.MSELoss(reduction=reduction)
-        elif self.loss == 'BCE':
-            return nn.BCLoss(reduction=reduction)
-        elif self.loss == 'CE':
-            return nn.CrossEntropyLoss(reduction=reduction)
-        else:
-            raise NotImplementedError
             
     def forward(self, x):
         """
@@ -219,7 +226,7 @@ class POISEVAE(nn.Module):
                 Reconstruction loss for each dataset
             KL_loss: torch.Tensor
         """
-        batch_size = x[0].shape[0] if self.batch else 1
+        batch_size = x[0].shape[0] if self.batched else 1
         if batch_size != self._batch_size:
             self.flag_initialize = 1 # for the last batch whose size is often different
         
@@ -233,23 +240,35 @@ class POISEVAE(nn.Module):
         # Actual sampling
         z_gibbs_priors, z_gibbs_posteriors = self._sampling(g22, mu, var, n_iterations=5)
 
-        x_ = self.decode(z_gibbs_posteriors) # Decoding
+        x_rec = self.decode(z_gibbs_posteriors) # Decoding
         
-        G = torch.block_diag(self.g11, g22)
+        G = torch.block_diag(self.g11, g22) # For convenience
 
-        # KL loss
+        # KL divergence term
         kls = self.kl_div.calc(G, z_gibbs_posteriors, z_gibbs_priors, mu, var)
-        KL_loss  = torch.sum(torch.stack(kls))
+        KL_loss  = kls[0] + kls[1] + kls[2]
 
-        # Reconstruction loss
-        recs = [loss_func(x_[i], x[i]) for i, loss_func in enumerate(self.loss)]
-        rec_loss = torch.sum(torch.stack(recs))
+        # Reconstruction loss term
+        if hasattr(self, 'loss'):
+            recs = [loss_func(x_rec[i], x[i]) for i, loss_func in enumerate(self.loss)]
+        else:
+            recs = []
+            for i in range(self.M):
+                x_rec[i] = self.likelihoods[i](*x_rec[i])
+                negative_loglike = -x_rec[i].log_prob(x[i]).sum()
+                if self.reduction == 'mean':
+                    negative_loglike /= batch_size
+                recs.append(negative_loglike)
+                
+        rec_loss = 0
+        for i in range(self.M):
+            rec_loss += recs[i] if self.rec_weights is None else self.rec_weights[i] * recs[i]
         
         # Total loss
         total_loss = KL_loss + rec_loss
 
         results = {
-            'z': self.z_posteriors, 'x_rec': x_, 'mu': mu, 'var': var, 
+            'z': self.z_posteriors, 'x_rec': x_rec, 'mu': mu, 'var': var, 
             'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': KL_loss
         }
 
