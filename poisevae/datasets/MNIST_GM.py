@@ -4,7 +4,7 @@ import numpy as np
 from torch.distributions import multivariate_normal as mv
 
 class MNIST_GM(torch.utils.data.Dataset):
-    def __init__(self, mnist_pt_path, sample_size=800, var=1/400, radius=1, data_augment=10):
+    def __init__(self, mnist_pt_path, sample_size=800, var=1/5, radius=3, data_augment=1):
 
         self.mnist_pt_path = mnist_pt_path
             
