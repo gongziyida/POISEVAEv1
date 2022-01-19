@@ -152,9 +152,13 @@ class POISEVAE(nn.Module):
         mu, var = [], []
         batch_size = x[0].shape[0] if self.batched else 1
         for i, xi in enumerate(x):
-            _mu, _log_var = self.encoders[i](xi)
-            mu.append(_mu.view(batch_size, -1))
-            var.append(-torch.exp(_log_var.view(batch_size, -1)))
+            if xi is None:
+                mu.append(None)
+                var.append(None)
+            else:
+                _mu, _log_var = self.encoders[i](xi)
+                mu.append(_mu.view(batch_size, -1))
+                var.append(-torch.exp(_log_var.view(batch_size, -1)))
         return mu, var
     
     def decode(self, z):
