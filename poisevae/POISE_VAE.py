@@ -41,7 +41,7 @@ class POISEVAE(nn.Module):
     __version__ = 7.0 # g21 / g12
     
     def __init__(self, encoders, decoders, loss_funcs=None, likelihoods=None, latent_dims=None, 
-                 rec_weights=None, reduction='mean', batched=True, batch_size=-1, device=_device):
+                 rec_weights=None, reduction='mean', missing_data=None, batched=True, batch_size=-1, device=_device):
         """
         Parameters
         ----------
@@ -77,6 +77,9 @@ class POISEVAE(nn.Module):
             
         reduction: str, optional; default 'mean'
             How to calculate the batch loss; either 'sum' or 'mean'
+            
+        missing_data: optional; default None
+            How to fill in missing data; None treated as 0
         
         batch: bool
             If the data is in batches
@@ -106,6 +109,8 @@ class POISEVAE(nn.Module):
         
         self.M = len(latent_dims)
 
+        self.missing_data = missing_data
+        
         self.batched = batched
         self._batch_size = batch_size # init
             
@@ -153,8 +158,8 @@ class POISEVAE(nn.Module):
         batch_size = x[0].shape[0] if self.batched else 1
         for i, xi in enumerate(x):
             if xi is None:
-                mu.append(None)
-                var.append(None)
+                mu.append(self.missing_data)
+                var.append(self.missing_data)
             else:
                 _mu, _log_var = self.encoders[i](xi)
                 mu.append(_mu.view(batch_size, -1))
