@@ -200,6 +200,10 @@ class POISEVAE(nn.Module):
         #                                  mu[0], var[0], mu[1], var[1], 
         #                                  n_iterations=5000)
 
+        # assert torch.isnan(z_priors[0]).sum() == 0
+        # assert torch.isnan(z_priors[1]).sum() == 0
+        # assert torch.isnan(z_posteriors[0]).sum() == 0
+        # assert torch.isnan(z_posteriors[1]).sum() == 0
         self.z_priors = z_priors
         self.z_posteriors = z_posteriors
         self.flag_initialize = 0
@@ -255,10 +259,9 @@ class POISEVAE(nn.Module):
             self.flag_initialize = 1 # for the last batch whose size is often different
         
         mu, var = self.encode(x)
-        
         g22 = -torch.exp(self.g22_hat)
-        g12 = 2 / sqrt(self.latent_dims_flatten[1]) * torch.exp(self.g22_hat / 2) * torch.tanh(self.g12_hat)
-        g21 = 2 / sqrt(self.latent_dims_flatten[0]) * torch.exp(self.g22_hat / 2) * torch.tanh(self.g21_hat)
+        g12 = 2 / sqrt(self.latent_dims_flatten[0]) * torch.exp(self.g22_hat / 2) * torch.tanh(self.g12_hat)
+        g21 = 2 / sqrt(self.latent_dims_flatten[1]) * torch.exp(self.g22_hat / 2) * torch.tanh(self.g21_hat)
         G = torch.cat((torch.cat((self.g11, g12), 1), torch.cat((g21, g22), 1)), 0)
 
         # Initializing gibbs sample
@@ -266,6 +269,10 @@ class POISEVAE(nn.Module):
             self._init_gibbs(G, mu, var) # self.z_priors and .z_posteriors are now init.ed
         # Actual sampling
         z_gibbs_priors, z_gibbs_posteriors = self._sampling(G, mu, var, n_iterations=5)
+        # assert torch.isnan(z_gibbs_priors[0]).sum() == 0
+        # assert torch.isnan(z_gibbs_priors[1]).sum() == 0
+        # assert torch.isnan(z_gibbs_posteriors[0]).sum() == 0
+        # assert torch.isnan(z_gibbs_posteriors[1]).sum() == 0
 
         x_rec = self.decode(z_gibbs_posteriors) # Decoding
 
