@@ -65,7 +65,7 @@ class CUBSentences(Dataset):
             self._load_data()
 
     def __len__(self):
-        return len(self.data)
+        return len(self.data) - 1 
 
     def __getitem__(self, idx):
         sent = self.data[str(idx)]['idx']
@@ -226,7 +226,7 @@ class CUBImageFt(Dataset):
             self._load_ft_mat()
 
     def __len__(self):
-        return len(self.ft_mat)
+        return len(self.ft_mat) - 1
 
     def __getitem__(self, idx):
         return self.ft_mat[idx]

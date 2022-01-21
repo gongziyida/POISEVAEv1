@@ -11,7 +11,7 @@ class CUB(torch.utils.data.Dataset):
         self.return_idx = return_idx
         
     def __len__(self):
-        return len(self.CUBtxt)
+        return len(self.CUBtxt) - 1
     
     def __getitem__(self, idx):
         txt = self.CUBtxt.__getitem__(idx)[0]

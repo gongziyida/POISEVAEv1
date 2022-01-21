@@ -41,7 +41,8 @@ class POISEVAE(nn.Module):
     __version__ = 7.0 # g21 / g12
     
     def __init__(self, encoders, decoders, loss_funcs=None, likelihoods=None, latent_dims=None, 
-                 rec_weights=None, reduction='mean', missing_data=None, batched=True, batch_size=-1, device=_device):
+                 rec_weights=None, reduction='mean', mask_missing=None, missing_data=None, 
+                 batched=True, batch_size=-1, device=_device):
         """
         Parameters
         ----------
@@ -78,6 +79,10 @@ class POISEVAE(nn.Module):
         reduction: str, optional; default 'mean'
             How to calculate the batch loss; either 'sum' or 'mean'
             
+        mask_missing: callable, optional; default None
+            Must be of the form `mask_missing(data)` and return the masked data
+            The missing data should be None, while the present data should have the same data structures.
+            
         missing_data: optional; default None
             How to fill in missing data; None treated as 0
         
@@ -109,6 +114,7 @@ class POISEVAE(nn.Module):
         
         self.M = len(latent_dims)
 
+        self.mask_missing = mask_missing
         self.missing_data = missing_data
         
         self.batched = batched
@@ -143,6 +149,9 @@ class POISEVAE(nn.Module):
         self.g21_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         
         self.flag_initialize = 1
+        
+    def set_mask_missing(self, mask_missing):
+        self.mask_missing = mask_missing
     
     def encode(self, x):
         """
@@ -268,6 +277,7 @@ class POISEVAE(nn.Module):
             self.flag_initialize = 1 # for the last batch whose size is often different
         
         mu, var = self.encode(x)
+        
         g22 = -torch.exp(self.g22_hat)
         g12 = 2 / sqrt(self.latent_dims_flatten[0]) * torch.exp(self.g22_hat / 2) * torch.tanh(self.g12_hat)
         g21 = 2 / sqrt(self.latent_dims_flatten[1]) * torch.exp(self.g22_hat / 2) * torch.tanh(self.g21_hat)
@@ -295,11 +305,14 @@ class POISEVAE(nn.Module):
         else:
             recs = []
             for i in range(self.M):
-                x_rec[i] = self.likelihoods[i](*x_rec[i])
-                negative_loglike = -x_rec[i].log_prob(x[i]).sum()
-                if self.reduction == 'mean':
-                    negative_loglike /= batch_size
-                recs.append(negative_loglike)
+                if x[i] is None:
+                    recs.append(torch.tensor(0).to(self.device))
+                else:
+                    x_rec[i] = self.likelihoods[i](*x_rec[i])
+                    negative_loglike = -x_rec[i].log_prob(x[i]).sum()
+                    if self.reduction == 'mean':
+                        negative_loglike /= batch_size
+                    recs.append(negative_loglike)
                 
         rec_loss = 0
         for i in range(self.M):

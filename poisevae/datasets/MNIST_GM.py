@@ -33,7 +33,7 @@ class MNIST_GM(torch.utils.data.Dataset):
         return numbers_dict
     
     def __len__(self):
-        return len(self.mnist_data) * self.data_augment
+        return len(self.mnist_data) * self.data_augment - 1
     
     def __getitem__(self, index):
         """

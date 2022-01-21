@@ -3,6 +3,7 @@ import os
 import numpy as np
 import scipy.io as sio
 import torch
+import random
 
 _device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -12,9 +13,10 @@ def _log(results, mode, writer, epoch):
     writer.add_scalars('%s/loss/kld' % mode, {'kld': results['KL_loss'].item()}, epoch)
     writer.add_scalars('%s/loss/total' % mode, {'total': results['total_loss'].item()}, epoch)
 
-
+    
+    
 def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), return_latents=False,
-          device=_device, dtype=torch.float32):
+          mask_missing=None, device=_device, dtype=torch.float32):
     '''
     Parameters
     ----------
@@ -28,12 +30,16 @@ def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), retu
              model([data[0], data[1], ...])
         ```
     
-    record_idx: list or tuple of integers, optional
+    record_idx: list or tuple of integers, optional; default empty list
         The indices of the elements in the data returned by `joint_dataloader` needed to be recorded
         This is helpful if `joint_dataloader` also returns useful non-input elements
     
-    return_latents: bool, optional
+    return_latents: bool, optional; default False
         If true, return a dict containing the latent representation, mean, and variance.
+    
+    mask_missing: callable, optional; default None
+        Must be of the form `mask_missing(data)` and return the masked data
+        The missing data should be None, while the present data should have the same data structures.
     
     Returns
     -------
@@ -52,8 +58,12 @@ def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), retu
     
     for k, data in enumerate(joint_dataloader):
         optimizer.zero_grad()
-        
-        results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
+        if mask_missing is not None:
+            results = model(mask_missing(
+                [data[i].to(device=device, dtype=dtype) for i in range(model.M)]))
+        else:
+            results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
+            
         results['total_loss'].backward() 
         optimizer.step()
         _log(results, 'train', writer, epoch * len(joint_dataloader) + k)
@@ -78,7 +88,7 @@ def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), retu
 
 
 def test(model, joint_dataloader, epoch, writer, record_idx=(), return_latents=False,
-         device=_device, dtype=torch.float32):
+         mask_missing=None, device=_device, dtype=torch.float32):
     '''
     Parameters
     ----------
@@ -98,6 +108,10 @@ def test(model, joint_dataloader, epoch, writer, record_idx=(), return_latents=F
     
     return_latents: bool, optional
         If true, return a dict containing the latent representation, mean, and variance.
+        
+    mask_missing: callable, optional; default None
+        Must be of the form `mask_missing(data)` and return the masked data
+        The missing data should be None, while the present data should have the same data structures.
     
     Returns
     -------
@@ -116,7 +130,11 @@ def test(model, joint_dataloader, epoch, writer, record_idx=(), return_latents=F
     
     with torch.no_grad():
         for k, data in enumerate(joint_dataloader):
-            results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
+            if mask_missing is not None:
+                results = model(mask_missing(
+                    [data[i].to(device=device, dtype=dtype) for i in range(model.M)]))
+            else:
+                results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
 
             _log(results, 'test', writer, epoch * len(joint_dataloader) + k)
             
@@ -143,7 +161,7 @@ def save_latent_info(latent_info, path):
     '''
     for key, items in latent_info.items():
         for i, item in enumerate(items):
-            np.save(path + key + str(i + 1) + '.npy', 
+            np.save(os.path.join(path, key + str(i + 1) + '.npy'), 
                     np.vstack(latent_info[key][i]).astype(np.float32))
             
 

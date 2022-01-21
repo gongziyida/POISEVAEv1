@@ -34,9 +34,9 @@ class MNIST_SVHN(torch.utils.data.Dataset):
         
     def __len__(self):
         if self.sampler_mnist is None:
-            return len(self.mnist_data)
+            return len(self.mnist_data) - 1
         else:
-            return len(self.sampler_mnist)
+            return len(self.sampler_mnist) - 1
         
     def __getitem__(self, index):
         if self.sampler_mnist is None:
@@ -56,3 +56,11 @@ class MNIST_SVHN(torch.utils.data.Dataset):
 
         return mnist_img.view(-1)/255, svhn_img/255, mnist_target, svhn_target
     
+#         rand_num = random.random()
+#         if rand_num < 0.2: # Send both
+#             return mnist_img.view(-1)/255, svhn_img/255, mnist_target, svhn_target
+#         elif rand_num > 0.6: # Send SVHN only
+#             return torch.zeros_like(mnist_img), svhn_img/255, mnist_target, svhn_target
+#         else: # Send MNIST only
+#             return mnist_img.view(-1)/255, torch.zeros_like(svhn_img), mnist_target, svhn_target
+        
