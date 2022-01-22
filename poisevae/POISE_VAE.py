@@ -202,7 +202,7 @@ class POISEVAE(nn.Module):
         """
         Initialize the starting points for Gibbs sampling
         """
-        batch_size = mu[0].shape[0] if self.batched else 1
+        batch_size = self._fetch_batch_size(mu)
         self._batch_size = batch_size
         
         # Gibbs Z
@@ -278,7 +278,7 @@ class POISEVAE(nn.Module):
                 Reconstruction loss for each dataset
             KL_loss: torch.Tensor
         """
-        batch_size = x[0].shape[0] if self.batched else 1
+        batch_size = self._fetch_batch_size(x)
         if batch_size != self._batch_size:
             self.flag_initialize = 1 # for the last batch whose size is often different
         
@@ -320,10 +320,10 @@ class POISEVAE(nn.Module):
         else:
             recs = []
             for i in range(self.M):
+                x_rec[i] = self.likelihoods[i](*x_rec[i])
                 if x[i] is None:
-                    recs.append(torch.tensor(0).to(self.device))
+                    recs.append(torch.tensor(0).to(self.device, torch.float32))
                 else:
-                    x_rec[i] = self.likelihoods[i](*x_rec[i])
                     negative_loglike = -x_rec[i].log_prob(x[i]).sum()
                     if self.reduction == 'mean':
                         negative_loglike /= batch_size
@@ -342,3 +342,12 @@ class POISEVAE(nn.Module):
         }
 
         return results
+
+    
+    def _fetch_batch_size(self, x):
+        if not self.batched:
+            return 1
+        for xi in x:
+            if xi is not None:
+                return xi.shape[0]
+        return self._batch_size
