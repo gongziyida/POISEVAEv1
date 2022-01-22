@@ -72,8 +72,12 @@ def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), retu
         if return_latents:
             for i in range(model.M):
                 returns['latent'][i].append(results['z'][i].cpu().numpy())
-                returns['mu'][i].append(results['mu'][i].cpu().numpy())
-                returns['var'][i].append(results['var'][i].cpu().numpy())
+                if results['mu'][i] is not None:
+                    returns['mu'][i].append(results['mu'][i].cpu().numpy())
+                    returns['var'][i].append(results['var'][i].cpu().numpy())
+                else:
+                    returns['mu'][i].append(None)
+                    returns['var'][i].append(None)
                     
         for i, j in enumerate(record_idx): # Does not iterate if empty
             record[i].append(data[j])
@@ -142,8 +146,12 @@ def test(model, joint_dataloader, epoch, writer, record_idx=(), return_latents=F
             if return_latents:
                 for i in range(model.M):
                     returns['latent'][i].append(results['z'][i].cpu().numpy())
-                    returns['mu'][i].append(results['mu'][i].cpu().numpy())
-                    returns['var'][i].append(results['var'][i].cpu().numpy())
+                    if results['mu'][i] is not None:
+                        returns['mu'][i].append(results['mu'][i].cpu().numpy())
+                        returns['var'][i].append(results['var'][i].cpu().numpy())
+                    else:
+                        returns['mu'][i].append(None)
+                        returns['var'][i].append(None)
             
             for i, j in enumerate(record_idx): # Does not iterate if empty
                 record[i].append(data[j])
@@ -162,6 +170,7 @@ def save_latent_info(latent_info, path):
     '''
     for key, items in latent_info.items():
         for i, item in enumerate(items):
+            if 
             np.save(os.path.join(path, key + str(i + 1) + '.npy'), 
                     np.vstack(latent_info[key][i]).astype(np.float32))
             

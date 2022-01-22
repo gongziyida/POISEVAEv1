@@ -35,40 +35,35 @@ class GibbsSampler_A:
         return z1,z2
     
 class GibbsSampler_Z:
-    __version__ = 3.0 # g21 and g12
+    __version__ = 4.0 # t1 / t2
     def __init__(self, latent_dims, device=_device):
         self.latent_dims = latent_dims
         self.device = device
         self.NONES = [None] * len(self.latent_dims)
-        
-    def mean_calc(self, z, var, g11, lambda_1):
-        beta = torch.matmul(z, g11)
-        if lambda_1 is not None:
-            beta += lambda_1
-        return var * beta
     
-    def var_calc(self, T2, lambda2):
+    def var_calc(self, T2, lambda2, t2):
         if lambda2 is not None:
-            return torch.reciprocal(2 * (1 - lambda2 - T2))
+            return -torch.reciprocal(2 * (t2 + lambda2 + T2))
         else:
-            return torch.reciprocal(2 * (1 - T2))
+            return -torch.reciprocal(2 * (t2 + T2))
     
-    def mean_calc(self, T1, var, lambda1):
+    def mean_calc(self, T1, var, lambda1, t1):
         if lambda1 is not None:
-            return var * (T1 + lambda1)
+            return var * (T1 + lambda1 + t1)
         else:
-            return var * T1
+            return var * (T1 + t1)
         
-    def value_calc(self, z, G, lambda1, lambda2):
+    def value_calc(self, z, G, lambda1, lambda2, t1, t2):
         T = torch.cat((z, torch.square(z)), 1)
         Tp = torch.matmul(T, G)
         mid = G.shape[1] // 2
         
-        var = self.var_calc(Tp[:, mid:], lambda2)
-        mean = self.mean_calc(Tp[:, :mid], var, lambda1)
+        var = self.var_calc(Tp[:, mid:], lambda2, t2)
+        mean = self.mean_calc(Tp[:, :mid], var, lambda1, t1)
         return mean + torch.sqrt(var) * torch.randn_like(var)
         
-    def sample(self, G, z=None, lambda1s=None, lambda2s=None, n_iterations=1, batch_size=None):
+    def sample(self, G, z=None, lambda1s=None, lambda2s=None, t1s=None, t2s=None, 
+               n_iterations=1, batch_size=None):
         if z is None:
             if batch_size is None:
                 raise RuntimeError('batch_size must be specified if z is not given.')
@@ -81,7 +76,7 @@ class GibbsSampler_Z:
             
         # TODO: generalize to M > 2
         for i in range(n_iterations):
-            z[0] = self.value_calc(z[1], G.t(), lambda1s[0], lambda2s[0])
-            z[1] = self.value_calc(z[0], G, lambda1s[1], lambda2s[1])
+            z[0] = self.value_calc(z[1], G.t(), lambda1s[0], lambda2s[0], t1s[0], t2s[0])
+            z[1] = self.value_calc(z[0], G, lambda1s[1], lambda2s[1], t1s[1], t2s[1])
             
         return z
