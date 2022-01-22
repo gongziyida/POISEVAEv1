@@ -4,6 +4,7 @@ import numpy as np
 import scipy.io as sio
 import torch
 import random
+from numba import jit
 
 _device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -172,10 +173,11 @@ def save_checkpoint(model, optimizer, save_path, epoch):
         'epoch': epoch
     }, save_path)
 
-def load_checkpoint(model, optimizer, load_path):
+def load_checkpoint(model, optimizer=None, load_path='.'):
     checkpoint = torch.load(load_path)
     model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     epoch = checkpoint['epoch']
     
     return model, optimizer, epoch
@@ -262,3 +264,15 @@ def augment_MNIST_SVHN(MNIST_PATH, SVHN_PATH, fname_MNIST_idx, fname_SVHN_idx, m
     torch.save(idx_svhn, os.path.join(os.path.dirname(SVHN_PATH), fname_SVHN_idx + '.pt'))
     
     return idx_mnist, idx_svhn
+
+
+
+@jit(nopython=True)
+def sent_emb(data, emb, weights, output, EOS=2):
+    batch_size, sent_len = data.shape
+    for i in range(batch_size):
+        for j in range(sent_len):
+            output[i] += emb[data[i, j]] * weights[data[i, j]]
+            if data[i, j] == EOS:
+                break
+        output[i] /= j+1
