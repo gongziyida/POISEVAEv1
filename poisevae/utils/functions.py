@@ -170,7 +170,6 @@ def save_latent_info(latent_info, path):
     '''
     for key, items in latent_info.items():
         for i, item in enumerate(items):
-            if 
             np.save(os.path.join(path, key + str(i + 1) + '.npy'), 
                     np.vstack(latent_info[key][i]).astype(np.float32))
             
