@@ -139,18 +139,18 @@ class POISEVAE(nn.Module):
             raise ValueError('`reduction` must be either "mean" or "sum".')
         self.reduction = reduction
         
-        self.gibbs = GibbsSampler_Z(self.latent_dims_flatten)
+        self.gibbs = GibbsSampler_Z(self.latent_dims_flatten, device=self.device)
         # self.gibbs = GibbsSampler_A(*self.latent_dims_flatten, batch_size)
-        self.kl_div = KLD(self.latent_dims_flatten, reduction=self.reduction)
+        self.kl_div = KLD(self.latent_dims_flatten, reduction=self.reduction, device=self.device)
         
         self.g11 = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g22_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g12_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g21_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
-        self.t1 = [nn.Parameter(torch.randn(ld, device=self.device)) 
-                   for ld in self.latent_dims_flatten]
-        self.t2_hat = [nn.Parameter(torch.randn(ld, device=self.device)) 
-                       for ld in self.latent_dims_flatten]
+        self.t1 = nn.ParameterList([nn.Parameter(torch.randn(ld, device=self.device)) 
+                                    for ld in self.latent_dims_flatten])
+        self.t2_hat = nn.ParameterList([nn.Parameter(torch.randn(ld, device=self.device)) 
+                                        for ld in self.latent_dims_flatten])
         
         self.flag_initialize = 1
         
@@ -205,41 +205,45 @@ class POISEVAE(nn.Module):
         batch_size = self._fetch_batch_size(mu)
         self._batch_size = batch_size
         
-        # Gibbs Z
-        z_priors = self.gibbs.sample(G, t1s=self.t1, t2s=t2, 
-                                     n_iterations=n_iterations, batch_size=batch_size)
-        z_posteriors = self.gibbs.sample(G, lambda1s=mu, lambda2s=var, t1s=self.t1, t2s=t2,
+        with torch.no_grad(): # this is only to pick an init value for the real sampling
+            # Gibbs Z
+            z_priors = self.gibbs.sample(G, t1s=self.t1, t2s=t2, 
                                          n_iterations=n_iterations, batch_size=batch_size)
-        
-        # Gibbs A
-        # m1, m2 = G.shape[0]//2, G.shape[1]//2
-        # g11, g22, g12, g21 = G[:m1, :m2], G[m1:, m2:], G[:m1, m2:], G[m1:, :m2]
-        # z_priors = self.gibbs.sample(1, torch.zeros_like(mu[0]), torch.zeros_like(mu[1]), 
-        #                              g11, g22, g12, g21,
-        #                              torch.zeros_like(mu[0]), torch.zeros_like(var[0]),
-        #                              torch.zeros_like(mu[1]), torch.zeros_like(var[1]),
-        #                              n_iterations=5000)
-        # z_posteriors = self.gibbs.sample(1, torch.zeros_like(mu[0]), torch.zeros_like(mu[1]), 
-        #                                  g11, g22, g12, g21, 
-        #                                  mu[0], var[0], mu[1], var[1], 
-        #                                  n_iterations=5000)
+            z_posteriors = self.gibbs.sample(G, lambda1s=mu, lambda2s=var, t1s=self.t1, t2s=t2,
+                                             n_iterations=n_iterations, batch_size=batch_size)
+
+            # Gibbs A
+            # m1, m2 = G.shape[0]//2, G.shape[1]//2
+            # g11, g22, g12, g21 = G[:m1, :m2], G[m1:, m2:], G[:m1, m2:], G[m1:, :m2]
+            # z_priors = self.gibbs.sample(1, torch.zeros_like(mu[0]), torch.zeros_like(mu[1]), 
+            #                              g11, g22, g12, g21,
+            #                              torch.zeros_like(mu[0]), torch.zeros_like(var[0]),
+            #                              torch.zeros_like(mu[1]), torch.zeros_like(var[1]),
+            #                              n_iterations=5000)
+            # z_posteriors = self.gibbs.sample(1, torch.zeros_like(mu[0]), torch.zeros_like(mu[1]), 
+            #                                  g11, g22, g12, g21, 
+            #                                  mu[0], var[0], mu[1], var[1], 
+            #                                  n_iterations=5000)
 
         # assert torch.isnan(z_priors[0]).sum() == 0
         # assert torch.isnan(z_priors[1]).sum() == 0
         # assert torch.isnan(z_posteriors[0]).sum() == 0
         # assert torch.isnan(z_posteriors[1]).sum() == 0
-        self.z_priors = z_priors
-        self.z_posteriors = z_posteriors
+        self.z_priors = [z.detach() for z in z_priors]
+        self.z_posteriors = [z.detach() for z in z_posteriors]
         self.flag_initialize = 0
         
     def _sampling(self, G, mu, var, t2, n_iterations=5):
         z_priors = [z.detach() for z in self.z_priors]
         z_posteriors = [z.detach() for z in self.z_posteriors]
+        del self.z_priors, self.z_posteriors # Free memory
         
         # Gibbs Z
         z_gibbs_priors = self.gibbs.sample(G, t1s=self.t1, t2s=t2, z=z_priors, n_iterations=n_iterations)
+        del z_priors 
         z_gibbs_posteriors = self.gibbs.sample(G, lambda1s=mu, lambda2s=var, t1s=self.t1, t2s=t2,
                                                z=z_posteriors, n_iterations=n_iterations)
+        del z_posteriors
 
         # Gibbs A
         # m1, m2 = G.shape[0]//2, G.shape[1]//2
@@ -249,10 +253,12 @@ class POISEVAE(nn.Module):
         #                                  torch.zeros_like(mu[0]), torch.zeros_like(var[0]),
         #                                  torch.zeros_like(mu[1]), torch.zeros_like(var[1]),
         #                                  n_iterations=n_iterations)
+        # del z_priors # Free memory
         # z_gibbs_posteriors = self.gibbs.sample(0, *z_posteriors,
         #                                  g11, g22, g12, g21, 
         #                                  mu[0], var[0], mu[1], var[1], 
         #                                  n_iterations=n_iterations)
+        # del z_posteriors
 
         # For calculating the loss and future use
         self.z_priors = [z.detach() for z in z_gibbs_priors]
@@ -322,7 +328,7 @@ class POISEVAE(nn.Module):
             for i in range(self.M):
                 x_rec[i] = self.likelihoods[i](*x_rec[i])
                 if x[i] is None:
-                    recs.append(torch.tensor(0).to(self.device, torch.float32))
+                    recs.append(torch.tensor(0).to(self.device, G.dtype))
                 else:
                     negative_loglike = -x_rec[i].log_prob(x[i]).sum()
                     if self.reduction == 'mean':

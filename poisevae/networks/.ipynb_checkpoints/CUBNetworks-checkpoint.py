@@ -88,14 +88,16 @@ class DecTxt(nn.Module):
         del li[-2]
         del li[1]
         self.dec = nn.Sequential(*li)
-        self.anti_emb = nn.Sequential(nn.Linear(self.emb_dim, self.vocab_size),
-                                      nn.Sigmoid())
+        # self.anti_emb = nn.Sequential(nn.Linear(self.emb_dim, self.vocab_size),
+        #                               nn.Sigmoid())
+        self.anti_emb = nn.Linear(self.emb_dim, self.vocab_size)
         
     def forward(self, z, argmax=False):
         z = self.dec(z)
         z = self.anti_emb(z.view(-1, self.emb_dim))
         # z = z.view(-1, self.txt_len, self.vocab_size) # batch x txt len x vocab size
         z = z.view(-1, self.vocab_size)
+        
         if argmax:
             z = z.argmax(-1).float()
         return (z, )

@@ -16,6 +16,7 @@ MNIST_PATH = os.path.join(HOME_PATH, 'Datasets/MNIST/%s.pt')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--foldername', type=str, help='Folder name under runs/MNIST_GM/')
+parser.add_argument('--radius', type=float, help='radius')
 
 class EncMNIST(nn.Module):
     def __init__(self, latent_dim):
@@ -87,8 +88,11 @@ class DecGM(nn.Module):
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    joint_dataset_train = MNIST_GM(mnist_pt_path=MNIST_PATH % 'train', data_augment=1, radius=5)
-    joint_dataset_test = MNIST_GM(mnist_pt_path=MNIST_PATH % 'test', data_augment=1, radius=5)
+    args = parser.parse_args()
+    print(args)
+    
+    joint_dataset_train = MNIST_GM(mnist_pt_path=MNIST_PATH % 'train', data_augment=1, radius=args.radius)
+    joint_dataset_test = MNIST_GM(mnist_pt_path=MNIST_PATH % 'test', data_augment=1, radius=args.radius)
 
     batch_size = 256
     train_loader = torch.utils.data.DataLoader(joint_dataset_train, batch_size=batch_size, shuffle=True, drop_last=True)
@@ -106,7 +110,7 @@ if __name__ == '__main__':
 
     optimizer = optim.Adam(vae.parameters(), lr=1e-3, amsgrad=True)
 
-    PATH = os.path.join('runs/MNIST_GM', parser.parse_args().foldername)
+    PATH = os.path.join('runs/MNIST_GM', args.foldername)
     print(PATH)
     if os.path.exists(PATH):
         raise ValueError
@@ -116,12 +120,10 @@ if __name__ == '__main__':
     epochs = 40 
     for epoch in tqdm(range(0, epochs)):
         poisevae.utils.train(vae, train_loader, optimizer, epoch, writer)
-        labels, latent_info = poisevae.utils.test(vae, test_loader, epoch, writer, 
-                                                  record_idx=(2, 3), return_latents=True)
+        poisevae.utils.test(vae, test_loader, epoch, writer)
         if (epoch+1) % 10 == 0 and epoch > 0:
             poisevae.utils.save_checkpoint(vae, optimizer, os.path.join(PATH, 'training_%d.pt' % (epoch+1)), epoch+1) 
 
     writer.flush()
     writer.close()
 
-    poisevae.utils.save_latent_info(latent_info, PATH)

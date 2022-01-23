@@ -1,0 +1,2 @@
+python3 CUB.py --rec_reweighting 0
+python3 CUB.py --rec_reweighting 1

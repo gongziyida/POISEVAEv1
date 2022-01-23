@@ -64,16 +64,17 @@ class GibbsSampler_Z:
         
     def sample(self, G, z=None, lambda1s=None, lambda2s=None, t1s=None, t2s=None, 
                n_iterations=1, batch_size=None):
+
         if z is None:
             if batch_size is None:
                 raise RuntimeError('batch_size must be specified if z is not given.')
-            z = [torch.randn(batch_size, ld).to(self.device) for ld in self.latent_dims]
-        
+            z = [torch.randn(batch_size, ld).to(self.device, G.dtype).detach() for ld in self.latent_dims]
+
         if lambda1s is None:
             lambda1s = self.NONES
         if lambda2s is None:
             lambda2s = self.NONES
-            
+
         # TODO: generalize to M > 2
         for i in range(n_iterations):
             z[0] = self.value_calc(z[1], G.t(), lambda1s[0], lambda2s[0], t1s[0], t2s[0])
