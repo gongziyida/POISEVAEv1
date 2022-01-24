@@ -108,7 +108,7 @@ if __name__ == '__main__':
     vae = poisevae.POISEVAE([enc_mnist, enc_gm], [dec_mnist, dec_gm], likelihoods=[Laplace, Normal], 
                             latent_dims=[lat1, lat2], reduction='mean', batch_size=batch_size).to(device)
 
-    optimizer = optim.Adam(vae.parameters(), lr=1e-3, amsgrad=True)
+    optimizer = optim.Adam(vae.parameters(), lr=8e-4, amsgrad=True)
 
     PATH = os.path.join('runs/MNIST_GM', args.foldername)
     print(PATH)

@@ -42,7 +42,7 @@ class POISEVAE(nn.Module):
     
     def __init__(self, encoders, decoders, loss_funcs=None, likelihoods=None, latent_dims=None, 
                  rec_weights=None, reduction='mean', mask_missing=None, missing_data=None, 
-                 batched=True, batch_size=-1, device=_device):
+                 batched=True, fix_t=False, batch_size=-1, device=_device):
         """
         Parameters
         ----------
@@ -147,10 +147,14 @@ class POISEVAE(nn.Module):
         self.g22_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g12_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g21_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
-        self.t1 = nn.ParameterList([nn.Parameter(torch.randn(ld, device=self.device)) 
-                                    for ld in self.latent_dims_flatten])
-        self.t2_hat = nn.ParameterList([nn.Parameter(torch.randn(ld, device=self.device)) 
+        if fix_t:
+            self.t1 = [torch.zeros(1, device=self.device), torch.zeros(1, device=self.device)]
+            self.t2_hat = [torch.zeros(1, device=self.device), torch.zeros(1, device=self.device)]
+        else:
+            self.t1 = nn.ParameterList([nn.Parameter(torch.randn(ld, device=self.device)) 
                                         for ld in self.latent_dims_flatten])
+            self.t2_hat = nn.ParameterList([nn.Parameter(torch.randn(ld, device=self.device)) 
+                                            for ld in self.latent_dims_flatten])
         
         self.flag_initialize = 1
         
