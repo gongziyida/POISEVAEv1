@@ -4,7 +4,7 @@ import random
 import numpy as np
 
 class MNIST_SVHN(torch.utils.data.Dataset):
-    def __init__(self, mnist_pt_path, svhn_mat_path, sampler_mnist=None, sampler_svhn=None):
+    def __init__(self, mnist_pt_path, svhn_mat_path, sampler_mnist=None, sampler_svhn=None, reverse=False):
         self.mnist_pt_path, self.svhn_mat_path = mnist_pt_path, svhn_mat_path
         self.sampler_mnist, self.sampler_svhn = sampler_mnist, sampler_svhn
             
@@ -17,6 +17,8 @@ class MNIST_SVHN(torch.utils.data.Dataset):
         # the svhn dataset assigns the class label "10" to the digit 0
         self.svhn_targets = svhn_mat_info['y'].astype(np.int64).squeeze() % 10
         self.svhn_data = np.transpose(self.svhn_data, (3, 2, 0, 1))
+        
+        self.reverse = reverse
         
         if sampler_mnist is None:
             # Now we have the svhn data and the SVHN Labels, for each index get the classes
@@ -54,7 +56,10 @@ class MNIST_SVHN(torch.utils.data.Dataset):
             svhn_img = self.svhn_data[self.sampler_svhn[index]]
             svhn_target = int(self.svhn_targets[self.sampler_svhn[index]])
 
-        return mnist_img.view(-1)/255, svhn_img/255, mnist_target, svhn_target
+        if self.reverse:
+            return svhn_img/255, mnist_img.view(-1)/255, mnist_target, svhn_target
+        else:
+            return mnist_img.view(-1)/255, svhn_img/255, mnist_target, svhn_target
     
 #         rand_num = random.random()
 #         if rand_num < 0.2: # Send both

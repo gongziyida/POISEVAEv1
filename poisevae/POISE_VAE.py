@@ -270,7 +270,22 @@ class POISEVAE(nn.Module):
         
         return z_gibbs_priors, z_gibbs_posteriors
             
-    def forward(self, x):
+    def get_G(self):
+        g22 = -torch.exp(self.g22_hat)
+        g12 = 2 / sqrt(self.latent_dims_flatten[0]) * \
+              torch.exp(self.g22_hat / 2 + self.t2_hat[1].unsqueeze(0) / 2) * \
+              torch.tanh(self.g12_hat)
+        g21 = 2 / sqrt(self.latent_dims_flatten[1]) * \
+              torch.exp(self.g22_hat / 2 + self.t2_hat[0].unsqueeze(1) / 2) * \
+              torch.tanh(self.g21_hat)
+        G = torch.cat((torch.cat((self.g11, g12), 1), torch.cat((g21, g22), 1)), 0)
+        return G
+    
+    def get_t(self):
+        t2 = [-torch.exp(t2_hat) for t2_hat in self.t2_hat]
+        return self.t1, t2
+    
+    def forward(self, x, n_gibbs_iter=5):
         """
         Return
         ------
@@ -297,22 +312,15 @@ class POISEVAE(nn.Module):
         else:
             mu, var = self.encode(x)
         
-        g22 = -torch.exp(self.g22_hat)
-        g12 = 2 / sqrt(self.latent_dims_flatten[0]) * \
-              torch.exp(self.g22_hat / 2 + self.t2_hat[1].unsqueeze(0) / 2) * \
-              torch.tanh(self.g12_hat)
-        g21 = 2 / sqrt(self.latent_dims_flatten[1]) * \
-              torch.exp(self.g22_hat / 2 + self.t2_hat[0].unsqueeze(1) / 2) * \
-              torch.tanh(self.g21_hat)
-        G = torch.cat((torch.cat((self.g11, g12), 1), torch.cat((g21, g22), 1)), 0)
+        G = self.get_G()
+        _, t2 = self.get_t()
         
-        t2 = [-torch.exp(t2_hat) for t2_hat in self.t2_hat]
 
         # Initializing gibbs sample
         if self.flag_initialize == 1:
             self._init_gibbs(G, mu, var, t2) # self.z_priors and .z_posteriors are now init.ed
         # Actual sampling
-        z_gibbs_priors, z_gibbs_posteriors = self._sampling(G, mu, var, t2, n_iterations=5)
+        z_gibbs_priors, z_gibbs_posteriors = self._sampling(G, mu, var, t2, n_iterations=n_gibbs_iter)
         # assert torch.isnan(z_gibbs_priors[0]).sum() == 0
         # assert torch.isnan(z_gibbs_priors[1]).sum() == 0
         # assert torch.isnan(z_gibbs_posteriors[0]).sum() == 0
@@ -351,6 +359,29 @@ class POISEVAE(nn.Module):
             'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': KL_loss
         }
 
+        return results
+
+    
+    def generate(self, n_samples, n_gibbs_iter=50):
+        self._batch_size = n_samples
+        G = self.get_G()
+        _, t2 = self.get_t()
+        
+        nones = [None] * len(self.latent_dims)
+        
+        # Initializing gibbs sample
+        if self.flag_initialize == 1:
+            self._init_gibbs(G, nones, nones, t2) # self.z_priors and .z_posteriors are now init.ed
+        # Actual sampling
+        z_gibbs_priors, z_gibbs_posteriors = self._sampling(G, nones, nones, t2, n_iterations=n_gibbs_iter)
+
+        x_rec = self.decode(z_gibbs_posteriors) # Decoding
+        
+        for i in range(self.M):
+            x_rec[i] = self.likelihoods[i](*x_rec[i])
+            
+        results = {'z': z_gibbs_posteriors, 'x_rec': x_rec}
+        
         return results
 
     
