@@ -8,3 +8,12 @@ class Categorical(torch.distributions.OneHotCategorical):
         idx = target.view(-1).to(torch.long)
         target = torch.nn.functional.one_hot(idx, num_classes=self.probs.shape[1])
         return super(Categorical, self).log_prob(target).view(*shape).to(dtype=dtype)
+
+    
+class NULLWriter:
+    def __init__(self, *args, **kwargs):
+        pass
+    def add_scalar(self, *args, **kwargs):
+        pass
+    def add_scalars(self, *args, **kwargs):
+        pass

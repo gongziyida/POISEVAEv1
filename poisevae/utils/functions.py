@@ -9,6 +9,9 @@ from numba import jit
 _device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def _log(results, mode, writer, epoch):
+    if writer is None:
+        return
+    
     for i, val in enumerate(results['rec_losses']):
         writer.add_scalars('%s/loss/rec%d' % (mode, i), {'rec': val.item()}, epoch)
     writer.add_scalars('%s/loss/kld' % mode, {'kld': results['KL_loss'].item()}, epoch)
@@ -16,7 +19,7 @@ def _log(results, mode, writer, epoch):
 
     
     
-def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), return_latents=False,
+def train(model, joint_dataloader, optimizer, epoch, writer=None, record_idx=(), return_latents=False,
           mask_missing=None, device=_device, dtype=torch.float32):
     '''
     Parameters
@@ -92,7 +95,7 @@ def train(model, joint_dataloader, optimizer, epoch, writer, record_idx=(), retu
 
 
 
-def test(model, joint_dataloader, epoch, writer, record_idx=(), return_latents=False,
+def test(model, joint_dataloader, epoch, writer=None, record_idx=(), return_latents=False,
          mask_missing=None, device=_device, dtype=torch.float32):
     '''
     Parameters

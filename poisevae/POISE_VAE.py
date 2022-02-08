@@ -42,7 +42,7 @@ class POISEVAE(nn.Module):
     
     def __init__(self, encoders, decoders, loss_funcs=None, likelihoods=None, latent_dims=None, 
                  rec_weights=None, reduction='mean', mask_missing=None, missing_data=None, 
-                 batched=True, fix_t=False, batch_size=-1, device=_device):
+                 batched=True, fix_t=True, batch_size=-1, device=_device):
         """
         Parameters
         ----------
@@ -329,8 +329,7 @@ class POISEVAE(nn.Module):
         x_rec = self.decode(z_gibbs_posteriors) # Decoding
 
         # KL divergence term
-        kls = self.kl_div.calc(G, z_gibbs_posteriors, z_gibbs_priors, mu, var)
-        KL_loss  = kls[0] + kls[1] + kls[2]
+        KL_loss = self.kl_div.calc(G, z_gibbs_posteriors, z_gibbs_priors, mu, var)
 
         # Reconstruction loss term
         if hasattr(self, 'loss'):
