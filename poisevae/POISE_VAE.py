@@ -195,8 +195,10 @@ class POISEVAE(nn.Module):
         x_rec = []
         # batch_size = z[0].shape[0] if self.batched else 1
         for decoder, zi, ld in zip(self.decoders, z, self.latent_dims):
-            zi = zi.view(*zi.shape[:-1], *ld) # Match the shape to the output
-            x_ = decoder(zi)
+            batch_shape = zi.shape[:-1]
+            zi = zi.view(prod(batch_shape), *ld) # Match the shape to the output
+            x_ = list(decoder(zi))
+            x_[0] = x_[0].view(*batch_shape, *x_[0].shape[1:])
             x_rec.append(x_)
         return x_rec
             
@@ -250,7 +252,7 @@ class POISEVAE(nn.Module):
         x_rec = self.decode(z) # Decoding
 
         # KL divergence term
-        # KL_loss = KL_loss.mean() if self.reduction == 'mean' else KL_loss.sum()
+        KL_loss = KL_loss.mean() if self.reduction == 'mean' else KL_loss.sum()
 
         # Reconstruction loss term
         if hasattr(self, 'loss'):
