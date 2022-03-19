@@ -63,11 +63,13 @@ def IWq(G, z, nu1, nu2, var_proposal):
     log_normalization_post = torch.logsumexp(log_w_post, dim=1, keepdim=True)
     
     w = torch.exp(log_w_post - log_normalization_post)
+    if nu2[1].mean().item() < -1e20:
+        raise RuntimeError
     # print(nu1[0].mean().item(), nu1[1].mean().item(), nu2[0].mean().item(), nu2[1].mean().item())
     # print(h.mean().item(), h.median().item(), h.max().item(), h.min().item())
     # print(w)
+    # print('_____')
     
-    # print(torch.exp(-d - eps.unsqueeze(-1)).sum(1))
     # KL_div = torch.zeros(1) # arbitrary
     KL_div = (w * (d - log_normalization_post + log_normalization_prior)).sum(1)
     

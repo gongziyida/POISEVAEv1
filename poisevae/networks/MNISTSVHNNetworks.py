@@ -7,10 +7,12 @@ class EncMNIST(nn.Module):
         self.latent_dim = latent_dim
         self.dim_MNIST = 28 * 28
 
-        self.enc = nn.Sequential(nn.Linear(self.dim_MNIST, 400),
+        self.enc = nn.Sequential(nn.Linear(self.dim_MNIST, 512),
+                                 nn.ReLU(inplace=True), 
+                                 nn.Linear(512, 128),
                                  nn.ReLU(inplace=True))
-        self.enc_mu = nn.Linear(400, latent_dim)
-        self.enc_var = nn.Linear(400, latent_dim)
+        self.enc_mu = nn.Linear(128, latent_dim)
+        self.enc_var = nn.Linear(128, latent_dim)
 
     def forward(self, x):
         x = self.enc(x)
@@ -24,9 +26,11 @@ class DecMNIST(nn.Module):
         self.latent_dim = latent_dim
         self.dim_MNIST   = 28 * 28
         
-        self.dec = nn.Sequential(nn.Linear(self.latent_dim, 400), 
-                                 nn.ReLU(inplace=True), 
-                                 nn.Linear(400, self.dim_MNIST), 
+        self.dec = nn.Sequential(nn.Linear(self.latent_dim, 128), 
+                                 nn.ReLU(inplace=True),
+                                 nn.Linear(128, 512), 
+                                 nn.ReLU(inplace=True),
+                                 nn.Linear(512, self.dim_MNIST), 
                                  nn.Sigmoid())
         
     def forward(self, z):
