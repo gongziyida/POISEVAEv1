@@ -100,11 +100,11 @@ def IWq(G, z, nu1, nu2, mu_proposal, var_proposal):
     KL_poise = (w_poise * (d - log_normalization_post + log_normalization_prior)).sum(1) # (batch,)
     
     ########### PART II: TRAINING PROPOSAL ###########
-    ########### METHOD I: MAXIMIZE ENTROPY ###########
-    w_proposal, log_w_proposal, _, _ = calc_weight(h.detach(), r, d.detach())
-    neg_entropy = (w_proposal * log_w_proposal).sum(1) # (batch,)
+#     ########### METHOD I: MAXIMIZE ENTROPY ###########
+#     w_proposal, log_w_proposal, _, _ = calc_weight(h.detach(), r, d.detach())
+#     neg_entropy = (w_proposal * log_w_proposal).sum(1) # (batch,)
     
-    return w_poise, KL_poise, neg_entropy
+#     return w_poise, KL_poise, neg_entropy
 
 #     ########### METHOD II: MINIMIZE KL(r||q) ###########
 #     _, log_w_proposal, _, _ = calc_weight(h.detach(), r, d.detach())
@@ -119,3 +119,9 @@ def IWq(G, z, nu1, nu2, mu_proposal, var_proposal):
 #                   log_r_normalization
     
 #     return w_poise, KL_poise, KL_proposal
+
+    ########### METHOD III: MINIMIZE MSE ###########
+    _, log_w_proposal, _, _ = calc_weight(h.detach(), r, d.detach())
+    mse_proposal_poise = (log_w_proposal**2).sum(1)
+    
+    return w_poise, KL_poise, mse_proposal_poise
