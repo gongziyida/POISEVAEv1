@@ -1,3 +1,4 @@
+from copy import deepcopy
 import torch
 import torch.nn as nn
 from .importance_weighting import *
@@ -132,10 +133,11 @@ class POISEVAE(nn.Module):
         
         self.rec_weights = rec_weights
         
+        self.device = device
+        
         self.encoders = nn.ModuleList(encoders)
         self.decoders = nn.ModuleList(decoders)
-        
-        self.device = device
+        self.proposal = nn.ModuleList([deepcopy(encoder).to(self.device) for encoder in encoders])
         
         if reduction not in ('mean', 'sum'):
             raise ValueError('`reduction` must be either "mean" or "sum".')
@@ -167,20 +169,27 @@ class POISEVAE(nn.Module):
         x: list of torch.Tensor
         Return
         ------
-        z: list of torch.Tensor
+        nu1, nu2: list of torch.Tensor
         """
         nu1, nu2 = [], []
+        mu_proposal, var_proposal = [], []
         
         for i, xi in enumerate(x):
             if xi is None:
                 nu1.append(self.missing_data)
                 nu2.append(self.missing_data)
+                mu_proposal.append(torch.zeros(*self.latent_dims[i]).to(self.device))
+                var_proposal.append(torch.ones(*self.latent_dims[i]).to(self.device) * 10)
             else:
                 batch_size = xi.shape[0] if self.batched else 1
                 _nu1, _log_nu2 = self.encoders[i](xi)
                 nu1.append(_nu1.view(batch_size, -1))
                 nu2.append(-torch.exp(_log_nu2.view(batch_size, -1)))
-        return nu1, nu2
+                # Proposal dist. param.
+                _mu_proposal, _log_var_proposal = self.proposal[i](xi)
+                mu_proposal.append(_mu_proposal)
+                var_proposal.append(torch.exp(_log_var_proposal))
+        return nu1, nu2, mu_proposal, var_proposal
     
     def decode(self, z):
         """
@@ -196,7 +205,7 @@ class POISEVAE(nn.Module):
         # batch_size = z[0].shape[0] if self.batched else 1
         for decoder, zi, ld in zip(self.decoders, z, self.latent_dims):
             batch_shape = zi.shape[:-1]
-            zi = zi.view(prod(batch_shape), *ld) # Match the shape to the output
+            zi = zi.reshape(prod(batch_shape), *ld) # Match the shape to the output
             x_ = list(decoder(zi))
             x_[0] = x_[0].view(*batch_shape, *x_[0].shape[1:])
             x_rec.append(x_)
@@ -238,16 +247,15 @@ class POISEVAE(nn.Module):
         batch_size = self._fetch_batch_size(x)
         
         if self.mask_missing is not None:
-            nu1, nu2 = self.encode(self.mask_missing(x))
+            nu1, nu2, mu_proposal, var_proposal = self.encode(self.mask_missing(x))
         else:
-            nu1, nu2 = self.encode(x)
+            nu1, nu2, mu_proposal, var_proposal = self.encode(x)
         
         G = self.get_G()
         _, t2 = self.get_t()
         
-        var_proposal = self._fetch_var_proposal(G, t2)
-        z = sample_proposal(*self.latent_dims_flatten, var_proposal, batch_size, self.n_IW_sample)
-        w, KL_loss, other = IWq(G, z, nu1, nu2, var_proposal)
+        z = sample_proposal(*self.latent_dims_flatten, mu_proposal, var_proposal, batch_size, self.n_IW_sample)
+        w, KL_loss, proposal_loss = IWq(G, z, nu1, nu2, mu_proposal, var_proposal)
 
         x_rec = self.decode(z) # Decoding
 
@@ -274,12 +282,16 @@ class POISEVAE(nn.Module):
         for i in range(self.M):
             rec_loss += recs[i] if self.rec_weights is None else self.rec_weights[i] * recs[i]
         
+        # Proposal loss
+        proposal_loss = proposal_loss.mean() if self.reduction == 'mean' else proposal_loss.sum()
+        
         # Total loss
-        total_loss = KL_loss + rec_loss
+        total_loss = KL_loss + rec_loss + proposal_loss
 
         results = {
             'z': z, 'x_rec': x_rec, 'nu1': nu1, 'nu2': nu2, 'weights': w,
-            'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': KL_loss
+            'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': KL_loss,
+            'proposal_loss': proposal_loss
         }
 
         return results

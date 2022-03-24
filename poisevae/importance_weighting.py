@@ -2,23 +2,58 @@ import torch
 import numpy as np
 
 _device = 'cuda' if torch.cuda.is_available() else 'cpu'
+_LOG_2_PI = 0.79817986835
 
 def calc_eps(val):
     with torch.no_grad():
         eps = -val.max(dim=-1).values.unsqueeze(-1)
     return eps
 
-def sample_proposal(m1, m2, var, batch_size, n_IW_samples, device=_device):
-    mn1 = torch.distributions.MultivariateNormal(torch.zeros(m1), var * torch.eye(m1))
-    mn2 = torch.distributions.MultivariateNormal(torch.zeros(m2), var * torch.eye(m2))
-    return [mn1.sample([batch_size, n_IW_samples]).to(device), mn2.sample([batch_size, n_IW_samples]).to(device)]
+def sample_proposal(m1, m2, mu, var, batch_size, n_IW_samples, device=_device):
+    with torch.no_grad():
+        mn1 = torch.distributions.MultivariateNormal(mu[0], torch.diag_embed(var[0]))
+        mn1_samples = mn1.sample([n_IW_samples]).to(device) # (IW Samples, Batch)
+        mn2 = torch.distributions.MultivariateNormal(mu[1], torch.diag_embed(var[1]))
+        mn2_samples = mn2.sample([n_IW_samples]).to(device) # (IW Samples, Batch)
+    # Swap axis to (Batch, IW Samples)
+    return [torch.swapaxes(mn1_samples, 0, 1), torch.swapaxes(mn2_samples, 0, 1)] 
 
 
-def IWq(G, z, nu1, nu2, var_proposal):
+def calc_weight(h, r, d):
+    """ This calculation is the same as before. I just moved it here for reusing the code
+    """
+    log_w_prior = h - r # (batch, IW samples)
+    
+    h = h + d
+    assert torch.isnan(h).sum() == 0, "%s\n%s\n%s\n%s\n%s" % (d, nu1[0], nu1[1], nu2[0], nu2[1])
+    
+    log_w_post = h - r # (batch, IW samples)
+    
+    log_normalization_prior = torch.logsumexp(log_w_prior, dim=1, keepdim=True)
+    log_normalization_post = torch.logsumexp(log_w_post, dim=1, keepdim=True)
+    
+    log_w = log_w_post - log_normalization_post # Normalized 
+    w = torch.exp(log_w)
+    
+    return w, log_w, log_normalization_post, log_normalization_prior
+
+
+def check_nu(nu1, nu2):
+    """ These checking code is affecting the readability so I moved it here
+    """
+    assert nu2[1].mean().item() > -1e20 # Too small is pathological
+    # print(nu1[0].mean().item(), nu1[1].mean().item(), nu2[0].mean().item(), nu2[1].mean().item())
+    # print(h.mean().item(), h.median().item(), h.max().item(), h.min().item())
+    # print(w)
+    # print('_____')
+    
+
+def IWq(G, z, nu1, nu2, mu_proposal, var_proposal):
     """ Calc. the weights and expectations with importance weighting sampling.
         Assume `z`, `nu1` and `nu2` are list of tensors for different modalities.
         Assume `nu1` and `nu2` have shape (batch, latent dimension),
-        and `z` has shape (batch, IW samples, latent dimension)
+                `z` has shape (batch, IW samples, latent dimension),
+            and `mu/var_proposal` have shape (batch, latent dimension)
         $w \propto \exp(h + d) / \exp(r)$ where $h = H(z)$, $d = H(z, x) - H(z)$, 
         and $\exp(r)$ is the proposal PDF.
     """
@@ -31,11 +66,16 @@ def IWq(G, z, nu1, nu2, var_proposal):
     m = [z[i].shape[-1] for i in range(len(z))] # Latent dimensions
     z_sq = [z[i]**2 for i in range(len(z))]
     
-    # TODO: make it generic
-    # Memory efficiency
+    check_nu(nu1, nu2) # Just for testing
+    
+    # log proposal
+    r = -((z[0] - mu_proposal[0].unsqueeze(1))**2 / var_proposal[0].unsqueeze(1)).sum(-1) - \
+         ((z[1] - mu_proposal[1].unsqueeze(1))**2 / var_proposal[1].unsqueeze(1)).sum(-1)
+    r /= 2
+    
+    # log prior
     h = -z_sq[0].sum(-1) - z_sq[1].sum(-1)
     assert torch.isnan(h).sum() == 0
-    r = h / (var_proposal * 2) # log proposal
     
     h += (z[0] @ G[:m[0], :m[1]] * z[1]).sum(-1) # g11
     assert torch.isnan(h).sum() == 0, "%s" % G[:m[0], :m[1]]
@@ -52,25 +92,30 @@ def IWq(G, z, nu1, nu2, var_proposal):
     d = (nu1[0] * z[0]).sum(-1) + (nu1[1] * z[1]).sum(-1) + \
         (nu2[0] * z_sq[0]).sum(-1) + (nu2[1] * z_sq[1]).sum(-1)
 
-    log_w_prior = h - r # (batch, IW samples)
+    ########### CHANGES START HERE ###########
+    ########### PART I: TRAINING POISEVAE ###########
+    w_poise, _, log_normalization_post, log_normalization_prior = calc_weight(h, r.detach(), d)
     
-    h = h + d
-    assert torch.isnan(h).sum() == 0, "%s\n%s\n%s\n%s\n%s" % (d, nu1[0], nu1[1], nu2[0], nu2[1])
+    # KL_poise = torch.zeros(2) # arbitrary
+    KL_poise = (w_poise * (d - log_normalization_post + log_normalization_prior)).sum(1) # (batch,)
     
-    log_w_post = h - r # (batch, IW samples)
+    ########### PART II: TRAINING PROPOSAL ###########
+    ########### METHOD I: MAXIMIZE ENTROPY ###########
+    w_proposal, log_w_proposal, _, _ = calc_weight(h.detach(), r, d.detach())
+    neg_entropy = (w_proposal * log_w_proposal).sum(1) # (batch,)
     
-    log_normalization_prior = torch.logsumexp(log_w_prior, dim=1, keepdim=True)
-    log_normalization_post = torch.logsumexp(log_w_post, dim=1, keepdim=True)
+    return w_poise, KL_poise, neg_entropy
+
+#     ########### METHOD II: MINIMIZE KL(r||q) ###########
+#     _, log_w_proposal, _, _ = calc_weight(h.detach(), r, d.detach())
+#     log_r_normalization = -0.5 * (torch.log(var_proposal[0]).sum(1) + \
+#                                   torch.log(var_proposal[1]).sum(1) + \
+#                                   (m[0] + m[1]) * _LOG_2_PI)
+#     # KL(r||h) =  E_r [r - h - log_normalization_r + log_normalization_post]
+#     #          = -E_r [h - r - log_normalization_post] - log_normalization_r
+#     #          = -E_r [h - r - log_normalization_post] - log_normalization_r
+#     #          = -E_r [log_w_post] - log_normalization_r
+#     KL_proposal = (-r * torch.exp(log_r_normalization.unsqueeze(1)) * log_w_proposal).sum(1) - \
+#                   log_r_normalization
     
-    w = torch.exp(log_w_post - log_normalization_post)
-    if nu2[1].mean().item() < -1e20:
-        raise RuntimeError
-    # print(nu1[0].mean().item(), nu1[1].mean().item(), nu2[0].mean().item(), nu2[1].mean().item())
-    # print(h.mean().item(), h.median().item(), h.max().item(), h.min().item())
-    # print(w)
-    # print('_____')
-    
-    # KL_div = torch.zeros(1) # arbitrary
-    KL_div = (w * (d - log_normalization_post + log_normalization_prior)).sum(1)
-    
-    return w, KL_div, None
+#     return w_poise, KL_poise, KL_proposal
