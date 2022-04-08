@@ -19,7 +19,7 @@ def _log(results, mode, writer, epoch):
 
     
     
-def train(model, joint_dataloader, optimizer, epoch, writer=None, record_idx=(), return_latents=False,
+def train(model, joint_dataloader, optimizer, epoch, writer=None,
           mask_missing=None, device=_device, dtype=torch.float32):
     '''
     Parameters
@@ -34,29 +34,16 @@ def train(model, joint_dataloader, optimizer, epoch, writer=None, record_idx=(),
              model([data[0], data[1], ...])
         ```
     
-    record_idx: list or tuple of integers, optional; default empty list
-        The indices of the elements in the data returned by `joint_dataloader` needed to be recorded
-        This is helpful if `joint_dataloader` also returns useful non-input elements
-    
-    return_latents: bool, optional; default False
-        If true, return a dict containing the latent representation, mean, and variance.
-    
     mask_missing: callable, optional; default None
         Must be of the form `mask_missing(data)` and return the masked data
         The missing data should be None, while the present data should have the same data structures.
     
     Returns
     -------
-    record: list, available if `record_idx` is not empty
-        Data loaded, see above
-    latent_info: dict, available if `return_latents` is True
-        Contains `latent`, `mu`, and `var` returned by the model for each batch
+    inputs
+    rec
     '''
-    
-    record = [[] for _ in range(len(record_idx))] # Empty if len(record_idx) == 0
-    returns = {'latent': [[] for _ in range(model.M)], 
-               'mu': [[] for _ in range(model.M)], 
-               'var': [[] for _ in range(model.M)]}
+    inputs, res = [], []
     
     model.train()
     
@@ -72,30 +59,13 @@ def train(model, joint_dataloader, optimizer, epoch, writer=None, record_idx=(),
         optimizer.step()
         _log(results, 'train', writer, epoch * len(joint_dataloader) + k)
         
-        if return_latents:
-            for i in range(model.M):
-                returns['latent'][i].append(results['z'][i].cpu().numpy())
-                if results['mu'][i] is not None:
-                    returns['mu'][i].append(results['mu'][i].cpu().numpy())
-                    returns['var'][i].append(results['var'][i].cpu().numpy())
-                else:
-                    returns['mu'][i].append(None)
-                    returns['var'][i].append(None)
-                    
-        for i, j in enumerate(record_idx): # Does not iterate if empty
-            record[i].append(data[j])
+        inputs.append(data)
+        res.append(results)
         
-    
-    ret_buffer = []
-    if len(record_idx) > 0:
-        ret_buffer.append(record)
-    if return_latents:
-        ret_buffer.append(returns)
-    return tuple(ret_buffer)
+    return inputs, res
 
 
-
-def test(model, joint_dataloader, epoch, writer=None, record_idx=(), return_latents=False,
+def test(model, joint_dataloader, epoch, writer=None, 
          mask_missing=None, device=_device, dtype=torch.float32):
     '''
     Parameters
@@ -109,13 +79,6 @@ def test(model, joint_dataloader, epoch, writer=None, record_idx=(), return_late
         for data in joint_dataloader:
              model([data[0], data[1], ...])
         ```
-    
-    record_idx: list or tuple of integers, optional
-        The indices of the elements in the data returned by `joint_dataloader` needed to be recorded
-        This is helpful if `joint_dataloader` also returns useful non-input elements
-    
-    return_latents: bool, optional
-        If true, return a dict containing the latent representation, mean, and variance.
         
     mask_missing: callable, optional; default None
         Must be of the form `mask_missing(data)` and return the masked data
@@ -123,16 +86,10 @@ def test(model, joint_dataloader, epoch, writer=None, record_idx=(), return_late
     
     Returns
     -------
-    record: list, available if `record_idx` is not empty
-        Data loaded, see above
-    latent_info: dict, available if `return_latents` is True
-        Contains `latent`, `mu`, and `var` returned by the model for each batch
+    inputs
+    rec
     '''
-    
-    record = [[] for _ in range(len(record_idx))] # Empty if len(record_idx) == 0
-    returns = {'latent': [[] for _ in range(model.M)], 
-               'mu': [[] for _ in range(model.M)], 
-               'var': [[] for _ in range(model.M)]}
+    inputs, res = [], []
     
     model.eval()
     
@@ -146,25 +103,10 @@ def test(model, joint_dataloader, epoch, writer=None, record_idx=(), return_late
 
             _log(results, 'test', writer, epoch * len(joint_dataloader) + k)
             
-            if return_latents:
-                for i in range(model.M):
-                    returns['latent'][i].append(results['z'][i].cpu().numpy())
-                    if results['mu'][i] is not None:
-                        returns['mu'][i].append(results['mu'][i].cpu().numpy())
-                        returns['var'][i].append(results['var'][i].cpu().numpy())
-                    else:
-                        returns['mu'][i].append(None)
-                        returns['var'][i].append(None)
+            inputs.append(data)
+            res.append(results)
             
-            for i, j in enumerate(record_idx): # Does not iterate if empty
-                record[i].append(data[j])
-            
-    ret_buffer = []
-    if len(record_idx) > 0:
-        ret_buffer.append(record)
-    if return_latents:
-        ret_buffer.append(returns)
-    return tuple(ret_buffer)
+    return inputs, res
 
 
 def save_latent_info(latent_info, path):

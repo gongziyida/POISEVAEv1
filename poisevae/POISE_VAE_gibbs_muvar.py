@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from .gibbs_sampler_poise import GibbsSampler
+from .gibbs_sampler_poise import GibbsSampler_Z, GibbsSampler_A
 from .kl_divergence_calculator import KLD
 from numpy import prod, sqrt
 
@@ -139,7 +139,8 @@ class POISEVAE(nn.Module):
             raise ValueError('`reduction` must be either "mean" or "sum".')
         self.reduction = reduction
         
-        self.gibbs = GibbsSampler(self.latent_dims_flatten, device=self.device)
+        self.gibbs = GibbsSampler_Z(self.latent_dims_flatten, device=self.device)
+        # self.gibbs = GibbsSampler_A(*self.latent_dims_flatten, batch_size)
         self.kl_div = KLD(self.latent_dims_flatten, reduction=self.reduction, device=self.device)
         
         self.g11 = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
@@ -155,6 +156,7 @@ class POISEVAE(nn.Module):
             self.t2_hat = nn.ParameterList([nn.Parameter(torch.randn(ld, device=self.device)) 
                                             for ld in self.latent_dims_flatten])
         
+        self.flag_initialize = 1
         
     def set_mask_missing(self, mask_missing):
         self.mask_missing = mask_missing
@@ -169,18 +171,18 @@ class POISEVAE(nn.Module):
         ------
         z: list of torch.Tensor
         """
-        nu1, nu2 = [], []
+        mu, var = [], []
         
         for i, xi in enumerate(x):
             if xi is None:
-                nu1.append(self.missing_data)
-                nu2.append(self.missing_data)
+                mu.append(self.missing_data)
+                var.append(self.missing_data)
             else:
                 batch_size = xi.shape[0] if self.batched else 1
-                _nu1, _log_nu2 = self.encoders[i](xi)
-                nu1.append(_nu1.view(batch_size, -1))
-                nu2.append(-torch.exp(_log_nu2.view(batch_size, -1)))
-        return nu1, nu2
+                _mu, _log_var = self.encoders[i](xi)
+                mu.append(_mu.view(batch_size, -1))
+                var.append(-torch.exp(_log_var.view(batch_size, -1)))
+        return mu, var
     
     def decode(self, z):
         """
@@ -199,17 +201,74 @@ class POISEVAE(nn.Module):
             x_ = decoder(zi)
             x_rec.append(x_)
         return x_rec
-        
-    def _sampling(self, G, nu1, nu2, t2, n_iterations=5):
-        batch_size = self._fetch_batch_size(nu1)
+    
+    def _init_gibbs(self, G, mu, var, t2, n_iterations=5000):
+        """
+        Initialize the starting points for Gibbs sampling
+        """
+        batch_size = self._fetch_batch_size(mu)
         self._batch_size = batch_size
         
-        z_priors = self.gibbs.sample(G, t1s=self.t1, t2s=t2, 
-                                     batch_size=batch_size, n_iterations=n_iterations)
-        z_posteriors = self.gibbs.sample(G, nu1=nu1, nu2=nu2, batch_size=batch_size,
-                                         t1s=self.t1, t2s=t2, n_iterations=n_iterations)
+        with torch.no_grad(): # this is only to pick an init value for the real sampling
+            # Gibbs Z
+            z_priors = self.gibbs.sample(G, t1s=self.t1, t2s=t2, 
+                                         n_iterations=n_iterations, batch_size=batch_size)
+            z_posteriors = self.gibbs.sample(G, lambda1s=mu, lambda2s=var, t1s=self.t1, t2s=t2,
+                                             n_iterations=n_iterations, batch_size=batch_size)
+
+            # Gibbs A
+            # m1, m2 = G.shape[0]//2, G.shape[1]//2
+            # g11, g22, g12, g21 = G[:m1, :m2], G[m1:, m2:], G[:m1, m2:], G[m1:, :m2]
+            # z_priors = self.gibbs.sample(1, torch.zeros_like(mu[0]), torch.zeros_like(mu[1]), 
+            #                              g11, g22, g12, g21,
+            #                              torch.zeros_like(mu[0]), torch.zeros_like(var[0]),
+            #                              torch.zeros_like(mu[1]), torch.zeros_like(var[1]),
+            #                              n_iterations=5000)
+            # z_posteriors = self.gibbs.sample(1, torch.zeros_like(mu[0]), torch.zeros_like(mu[1]), 
+            #                                  g11, g22, g12, g21, 
+            #                                  mu[0], var[0], mu[1], var[1], 
+            #                                  n_iterations=5000)
+
+        # assert torch.isnan(z_priors[0]).sum() == 0
+        # assert torch.isnan(z_priors[1]).sum() == 0
+        # assert torch.isnan(z_posteriors[0]).sum() == 0
+        # assert torch.isnan(z_posteriors[1]).sum() == 0
+        self.z_priors = [z.detach() for z in z_priors]
+        self.z_posteriors = [z.detach() for z in z_posteriors]
+        self.flag_initialize = 0
         
-        return z_priors, z_posteriors
+    def _sampling(self, G, mu, var, t2, n_iterations=5):
+        z_priors = [z.detach() for z in self.z_priors]
+        z_posteriors = [z.detach() for z in self.z_posteriors]
+        del self.z_priors, self.z_posteriors # Free memory
+        
+        # Gibbs Z
+        z_gibbs_priors = self.gibbs.sample(G, t1s=self.t1, t2s=t2, z=z_priors, n_iterations=n_iterations)
+        del z_priors 
+        z_gibbs_posteriors = self.gibbs.sample(G, lambda1s=mu, lambda2s=var, t1s=self.t1, t2s=t2,
+                                               z=z_posteriors, n_iterations=n_iterations)
+        del z_posteriors
+
+        # Gibbs A
+        # m1, m2 = G.shape[0]//2, G.shape[1]//2
+        # g11, g22, g12, g21 = G[:m1, :m2], G[m1:, m2:], G[:m1, m2:], G[m1:, :m2]
+        # z_gibbs_priors = self.gibbs.sample(0, *z_priors, 
+        #                                  g11, g22, g12, g21, 
+        #                                  torch.zeros_like(mu[0]), torch.zeros_like(var[0]),
+        #                                  torch.zeros_like(mu[1]), torch.zeros_like(var[1]),
+        #                                  n_iterations=n_iterations)
+        # del z_priors # Free memory
+        # z_gibbs_posteriors = self.gibbs.sample(0, *z_posteriors,
+        #                                  g11, g22, g12, g21, 
+        #                                  mu[0], var[0], mu[1], var[1], 
+        #                                  n_iterations=n_iterations)
+        # del z_posteriors
+
+        # For calculating the loss and future use
+        self.z_priors = [z.detach() for z in z_gibbs_priors]
+        self.z_posteriors = [z.detach() for z in z_gibbs_posteriors]
+        
+        return z_gibbs_priors, z_gibbs_posteriors
             
     def get_G(self):
         g22 = -torch.exp(self.g22_hat)
@@ -235,35 +294,42 @@ class POISEVAE(nn.Module):
                 Samples from the posterior distributions in the corresponding latent spaces
             x_rec: list of torch.Tensor
                 Reconstructed samples
-            nu: list of torch.Tensor
-                Posterior distribution nu1
-            nu2: list of torch.Tensor
-                Posterior distribution nu2
+            mu: list of torch.Tensor
+                Posterior distribution means
+            var: list of torch.Tensor
+                Posterior distribution variances
             total_loss: torch.Tensor
             rec_losses: list of torch.tensor
                 Reconstruction loss for each dataset
             KL_loss: torch.Tensor
         """
         batch_size = self._fetch_batch_size(x)
+        if batch_size != self._batch_size:
+            self.flag_initialize = 1 # for the last batch whose size is often different
         
         if self.mask_missing is not None:
-            nu1, nu2 = self.encode(self.mask_missing(x))
+            mu, var = self.encode(self.mask_missing(x))
         else:
-            nu1, nu2 = self.encode(x)
+            mu, var = self.encode(x)
         
         G = self.get_G()
         _, t2 = self.get_t()
-    
-        z_priors, z_posteriors = self._sampling(G, nu1, nu2, t2, n_iterations=n_gibbs_iter)
-        # assert torch.isnan(z_priors[0]).sum() == 0
-        # assert torch.isnan(z_priors[1]).sum() == 0
-        # assert torch.isnan(z_posteriors[0]).sum() == 0
-        # assert torch.isnan(z_posteriors[1]).sum() == 0
+        
 
-        x_rec = self.decode(z_posteriors) # Decoding
+        # Initializing gibbs sample
+        if self.flag_initialize == 1:
+            self._init_gibbs(G, mu, var, t2) # self.z_priors and .z_posteriors are now init.ed
+        # Actual sampling
+        z_gibbs_priors, z_gibbs_posteriors = self._sampling(G, mu, var, t2, n_iterations=n_gibbs_iter)
+        # assert torch.isnan(z_gibbs_priors[0]).sum() == 0
+        # assert torch.isnan(z_gibbs_priors[1]).sum() == 0
+        # assert torch.isnan(z_gibbs_posteriors[0]).sum() == 0
+        # assert torch.isnan(z_gibbs_posteriors[1]).sum() == 0
+
+        x_rec = self.decode(z_gibbs_posteriors) # Decoding
 
         # KL divergence term
-        KL_loss = self.kl_div.calc(G, z_posteriors, z_priors, nu1, nu2)
+        KL_loss = self.kl_div.calc(G, z_gibbs_posteriors, z_gibbs_priors, mu, var)
 
         # Reconstruction loss term
         if hasattr(self, 'loss'):
@@ -288,7 +354,7 @@ class POISEVAE(nn.Module):
         total_loss = KL_loss + rec_loss
 
         results = {
-            'z': z_posteriors, 'x_rec': x_rec, 'nu1': nu1, 'nu2': nu2, 
+            'z': self.z_posteriors, 'x_rec': x_rec, 'mu': mu, 'var': var, 
             'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': KL_loss
         }
 
@@ -302,14 +368,18 @@ class POISEVAE(nn.Module):
         
         nones = [None] * len(self.latent_dims)
         
-        z_priors, z_posteriors = self._sampling(G, nones, nones, t2, n_iterations=n_gibbs_iter)
+        # Initializing gibbs sample
+        if self.flag_initialize == 1:
+            self._init_gibbs(G, nones, nones, t2) # self.z_priors and .z_posteriors are now init.ed
+        # Actual sampling
+        z_gibbs_priors, z_gibbs_posteriors = self._sampling(G, nones, nones, t2, n_iterations=n_gibbs_iter)
 
-        x_rec = self.decode(z_posteriors) # Decoding
+        x_rec = self.decode(z_gibbs_posteriors) # Decoding
         
         for i in range(self.M):
             x_rec[i] = self.likelihoods[i](*x_rec[i])
             
-        results = {'z': z_posteriors, 'x_rec': x_rec}
+        results = {'z': z_gibbs_posteriors, 'x_rec': x_rec}
         
         return results
 

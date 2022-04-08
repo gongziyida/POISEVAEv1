@@ -19,15 +19,17 @@ def sample_proposal(m1, m2, mu, var, batch_size, n_IW_samples, device=_device):
     return [torch.swapaxes(mn1_samples, 0, 1), torch.swapaxes(mn2_samples, 0, 1)] 
 
 
-def calc_weight(h, r, d):
+def calc_weight(h, r, d, log_r_normalization):
     """ This calculation is the same as before. I just moved it here for reusing the code
     """
-    log_w_prior = h - r # (batch, IW samples)
+    log_r_normalization = log_r_normalization.unsqueeze(1) # (batch, 1)
+    
+    log_w_prior = h - r + log_r_normalization # (batch, IW samples)
     
     h = h + d
     assert torch.isnan(h).sum() == 0, "%s\n%s\n%s\n%s\n%s" % (d, nu1[0], nu1[1], nu2[0], nu2[1])
     
-    log_w_post = h - r # (batch, IW samples)
+    log_w_post = h - r + log_r_normalization # (batch, IW samples)
     
     log_normalization_prior = torch.logsumexp(log_w_prior, dim=1, keepdim=True)
     log_normalization_post = torch.logsumexp(log_w_post, dim=1, keepdim=True)
@@ -92,36 +94,41 @@ def IWq(G, z, nu1, nu2, mu_proposal, var_proposal):
     d = (nu1[0] * z[0]).sum(-1) + (nu1[1] * z[1]).sum(-1) + \
         (nu2[0] * z_sq[0]).sum(-1) + (nu2[1] * z_sq[1]).sum(-1)
 
-    ########### CHANGES START HERE ###########
+    log_r_normalization = -0.5 * (torch.log(var_proposal[0]).sum(1) + \
+                                  torch.log(var_proposal[1]).sum(1) + \
+                                  (m[0] + m[1]) * _LOG_2_PI)
+
     ########### PART I: TRAINING POISEVAE ###########
-    w_poise, _, log_normalization_post, log_normalization_prior = calc_weight(h, r.detach(), d)
+    ret = calc_weight(h, r.detach(), d, log_r_normalization.detach()) # Uncommon calc_weight below
+    # ret = calc_weight(h, r, d, log_r_normalization) # Comment calc_weight below
+    w, log_w, log_normalization_post, log_normalization_prior = ret
     
     # KL_poise = torch.zeros(2) # arbitrary
-    KL_poise = (w_poise * (d - log_normalization_post + log_normalization_prior)).sum(1) # (batch,)
+    KL_poise = (w * (d - log_normalization_post + log_normalization_prior)).sum(1) # (batch,)
     
     ########### PART II: TRAINING PROPOSAL ###########
 #     ########### METHOD I: MAXIMIZE ENTROPY ###########
-#     w_proposal, log_w_proposal, _, _ = calc_weight(h.detach(), r, d.detach())
-#     neg_entropy = (w_proposal * log_w_proposal).sum(1) # (batch,)
+#     # May lead to proposal var too small
+#     w, log_w, _, _ = calc_weight(h.detach(), r, d.detach(), log_r_normalization)
+#     neg_entropy = (w * log_w).sum(1) # (batch,)
     
-#     return w_poise, KL_poise, neg_entropy
+#     return w, KL_poise, neg_entropy
 
-#     ########### METHOD II: MINIMIZE KL(r||q) ###########
-#     _, log_w_proposal, _, _ = calc_weight(h.detach(), r, d.detach())
-#     log_r_normalization = -0.5 * (torch.log(var_proposal[0]).sum(1) + \
-#                                   torch.log(var_proposal[1]).sum(1) + \
-#                                   (m[0] + m[1]) * _LOG_2_PI)
-#     # KL(r||h) =  E_r [r - h - log_normalization_r + log_normalization_post]
-#     #          = -E_r [h - r - log_normalization_post] - log_normalization_r
-#     #          = -E_r [h - r - log_normalization_post] - log_normalization_r
-#     #          = -E_r [log_w_post] - log_normalization_r
-#     KL_proposal = (-r * torch.exp(log_r_normalization.unsqueeze(1)) * log_w_proposal).sum(1) - \
-#                   log_r_normalization
+    ########### METHOD II: MINIMIZE KL(r||q) ###########
+    _, log_w, _, _ = calc_weight(h.detach(), r, d.detach(), log_r_normalization)
     
-#     return w_poise, KL_poise, KL_proposal
+    # KL(r||h) =  E_r [r - h - log_normalization_r + log_normalization_post]
+    #          = -E_r [h - r - log_normalization_post] - log_normalization_r
+    #          = -E_r [h - r - log_normalization_post] - log_normalization_r
+    #          = -E_r [log_w_post] - log_normalization_r
+    prob_r = torch.exp(r - log_r_normalization.unsqueeze(1))
+    KL_proposal = (-prob_r * log_w).sum(1) - \
+                  log_r_normalization
+    
+    return w, KL_poise, KL_proposal
 
-    ########### METHOD III: MINIMIZE MSE ###########
-    _, log_w_proposal, _, _ = calc_weight(h.detach(), r, d.detach())
-    mse_proposal_poise = (log_w_proposal**2).sum(1)
+#     ########### METHOD III: MINIMIZE MSE ###########
+#     _, log_w, _, _ = calc_weight(h.detach(), r, d.detach(), log_r_normalization)
+#     mse_proposal_poise = (log_w**2).sum(1)
     
-    return w_poise, KL_poise, mse_proposal_poise
+#     return w, KL_poise, mse_proposal_poise
