@@ -206,6 +206,7 @@ class POISEVAE(nn.Module):
         
         z_priors = self.gibbs.sample(G, t1s=self.t1, t2s=t2, 
                                      batch_size=batch_size, n_iterations=n_iterations)
+        
         z_posteriors = self.gibbs.sample(G, nu1=nu1, nu2=nu2, batch_size=batch_size,
                                          t1s=self.t1, t2s=t2, n_iterations=n_iterations)
         
