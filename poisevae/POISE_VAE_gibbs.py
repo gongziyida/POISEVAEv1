@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from .gibbs_sampler_poise import GibbsSampler
-from .kl_divergence_calculator import KLD
+from .kl_divergence_calculator import KLDDerivative, KLDN01
 from numpy import prod, sqrt
 
 from time import time
@@ -38,11 +38,12 @@ def _func_type_setter(func, num, fname, concept):
 
 
 class POISEVAE(nn.Module):
-    __version__ = 8.0 # t1 / t2
+    __version__ = 10.0 # integrate different gibbs and kl calc.or
     
     def __init__(self, encoders, decoders, loss_funcs=None, likelihoods=None, latent_dims=None, 
                  rec_weights=None, reduction='mean', mask_missing=None, missing_data=None, 
-                 batched=True, fix_t=True, batch_size=-1, device=_device):
+                 batched=True, batch_size=-1, enc_config='nu', KL_calc='derivative', fix_t=True, 
+                 device=_device):
         """
         Parameters
         ----------
@@ -86,16 +87,25 @@ class POISEVAE(nn.Module):
         missing_data: optional; default None
             How to fill in missing data; None treated as 0
         
-        batch: bool
+        batched: bool, default True
             If the data is in batches
+            
+        batch_size: int, default -1
+            Default: automatically determined
+        
+        enc_config: str, default 'nu'
+            The definition of the encoder output, either 'nu' or 'mu/var'
+        
+        KL_calc: str, default 'derivative'
+            'derivative' or 'std_normal'
         
         device: torch.device, optional
         """
         super(POISEVAE,self).__init__()
 
+        # Modality check
         if len(encoders) != len(decoders):
             raise ValueError('The number of encoders must match that of decoders.')
-        
         if len(encoders) > 2:
             raise NotImplementedError('> 3 latent spaces not yet supported.')
         
@@ -103,6 +113,14 @@ class POISEVAE(nn.Module):
         if not all(map(lambda x: isinstance(x, nn.Module), (*encoders, *decoders))):
             raise TypeError('`encoders` and `decoders` must be lists of `nn.Module` class.')
 
+        # Flag check
+        if enc_config not in ('nu', 'mu/var'):
+            raise ValueError('`enc_config` value unreconized.')
+        if KL_calc not in ('derivative', 'std_normal'): 
+            raise ValueError('`KL_calc` value unreconized.')
+        if reduction not in ('mean', 'sum'):
+            raise ValueError('`reduction` must be either "mean" or "sum".')
+        
         # Get the latent dimensions
         if latent_dims is not None:
             if not hasattr(latent_dims, '__iter__'): # Iterable
@@ -111,8 +129,7 @@ class POISEVAE(nn.Module):
         else:
             self.latent_dims = tuple(map(lambda l: l.latent_dim, encoders))
         self.latent_dims, self.latent_dims_flatten = _latent_dims_type_setter(self.latent_dims)
-        
-        self.M = len(latent_dims)
+        self.M = len(self.latent_dims)
 
         self.mask_missing = mask_missing
         self.missing_data = missing_data
@@ -133,14 +150,20 @@ class POISEVAE(nn.Module):
         self.encoders = nn.ModuleList(encoders)
         self.decoders = nn.ModuleList(decoders)
         
+        self.enc_config = enc_config
         self.device = device
-        
-        if reduction not in ('mean', 'sum'):
-            raise ValueError('`reduction` must be either "mean" or "sum".')
         self.reduction = reduction
         
-        self.gibbs = GibbsSampler(self.latent_dims_flatten, device=self.device)
-        self.kl_div = KLD(self.latent_dims_flatten, reduction=self.reduction, device=self.device)
+        self.gibbs = GibbsSampler(self.latent_dims_flatten, enc_config=enc_config, 
+                                  device=self.device)
+        
+        if KL_calc == 'derivative':
+            self.kl_div = KLDDerivative(self.latent_dims_flatten, reduction=self.reduction, 
+                                        enc_config=enc_config, device=self.device)
+        elif KL_calc == 'std_normal':
+            self.kl_div = KLDN01(self.latent_dims_flatten, reduction=self.reduction, 
+                                 enc_config=enc_config, device=self.device)
+        
         
         self.g11 = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g22_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
@@ -169,18 +192,19 @@ class POISEVAE(nn.Module):
         ------
         z: list of torch.Tensor
         """
-        nu1, nu2 = [], []
+        param1, param2 = [], []
         
         for i, xi in enumerate(x):
             if xi is None:
-                nu1.append(self.missing_data)
-                nu2.append(self.missing_data)
+                param1.append(self.missing_data)
+                param2.append(self.missing_data)
             else:
                 batch_size = xi.shape[0] if self.batched else 1
-                _nu1, _log_nu2 = self.encoders[i](xi)
-                nu1.append(_nu1.view(batch_size, -1))
-                nu2.append(-torch.exp(_log_nu2.view(batch_size, -1)))
-        return nu1, nu2
+                _param1, _log_param2 = self.encoders[i](xi)
+                param1.append(_param1.view(batch_size, -1))
+                sign = 1 if self.enc_config == 'mu/var' else -1
+                param2.append(sign * torch.exp(_log_param2.view(batch_size, -1)))
+        return param1, param2
     
     def decode(self, z):
         """
@@ -200,17 +224,24 @@ class POISEVAE(nn.Module):
             x_rec.append(x_)
         return x_rec
         
-    def _sampling(self, G, nu1, nu2, t2, n_iterations=5):
-        batch_size = self._fetch_batch_size(nu1)
+    def _sampling(self, G, param1, param2, t2, n_iterations=5):
+        batch_size = self._fetch_batch_size(param1)
         self._batch_size = batch_size
         
         z_priors = self.gibbs.sample(G, t1s=self.t1, t2s=t2, 
                                      batch_size=batch_size, n_iterations=n_iterations)
         
-        z_posteriors = self.gibbs.sample(G, nu1=nu1, nu2=nu2, batch_size=batch_size,
-                                         t1s=self.t1, t2s=t2, n_iterations=n_iterations)
+        if self.enc_config == 'nu':
+            z_posteriors = self.gibbs.sample(G, nu1=param1, nu2=param2, batch_size=batch_size,
+                                             t1s=self.t1, t2s=t2, n_iterations=n_iterations)
+            kl = self.kl_div.calc(G, z_posteriors, z_priors, nu1=param1, nu2=param2)
+            
+        elif self.enc_config == 'mu/var':
+            z_posteriors = self.gibbs.sample(G, mu=param1, var=param2, batch_size=batch_size,
+                                             t1s=self.t1, t2s=t2, n_iterations=n_iterations)
+            kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, var=param2)
         
-        return z_priors, z_posteriors
+        return z_priors, z_posteriors, kl
             
     def get_G(self):
         g22 = -torch.exp(self.g22_hat)
@@ -236,10 +267,10 @@ class POISEVAE(nn.Module):
                 Samples from the posterior distributions in the corresponding latent spaces
             x_rec: list of torch.Tensor
                 Reconstructed samples
-            nu: list of torch.Tensor
-                Posterior distribution nu1
-            nu2: list of torch.Tensor
-                Posterior distribution nu2
+            param1: list of torch.Tensor
+                Posterior distribution parameter 1, either nu1 or mean, determined by `enc_config`
+            param2: list of torch.Tensor
+                Posterior distribution parameter 2, either nu2 or variance, determined by `enc_config`
             total_loss: torch.Tensor
             rec_losses: list of torch.tensor
                 Reconstruction loss for each dataset
@@ -248,23 +279,21 @@ class POISEVAE(nn.Module):
         batch_size = self._fetch_batch_size(x)
         
         if self.mask_missing is not None:
-            nu1, nu2 = self.encode(self.mask_missing(x))
+            param1, param2 = self.encode(self.mask_missing(x))
         else:
-            nu1, nu2 = self.encode(x)
+            param1, param2 = self.encode(x)
         
         G = self.get_G()
         _, t2 = self.get_t()
     
-        z_priors, z_posteriors = self._sampling(G, nu1, nu2, t2, n_iterations=n_gibbs_iter)
+        z_priors, z_posteriors, kl = self._sampling(G, param1, param2, t2, 
+                                                    n_iterations=n_gibbs_iter)
         # assert torch.isnan(z_priors[0]).sum() == 0
         # assert torch.isnan(z_priors[1]).sum() == 0
         # assert torch.isnan(z_posteriors[0]).sum() == 0
         # assert torch.isnan(z_posteriors[1]).sum() == 0
 
         x_rec = self.decode(z_posteriors) # Decoding
-
-        # KL divergence term
-        KL_loss = self.kl_div.calc(G, z_posteriors, z_priors, nu1, nu2)
 
         # Reconstruction loss term
         if hasattr(self, 'loss'):
@@ -280,17 +309,17 @@ class POISEVAE(nn.Module):
                     if self.reduction == 'mean':
                         negative_loglike /= batch_size
                     recs.append(negative_loglike)
-                
+        
         rec_loss = 0
         for i in range(self.M):
             rec_loss += recs[i] if self.rec_weights is None else self.rec_weights[i] * recs[i]
         
         # Total loss
-        total_loss = KL_loss + rec_loss
+        total_loss = kl + rec_loss
 
         results = {
-            'z': z_posteriors, 'x_rec': x_rec, 'nu1': nu1, 'nu2': nu2, 
-            'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': KL_loss
+            'z': z_posteriors, 'x_rec': x_rec, 'param1': param1, 'param2': param2, 
+            'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': kl
         }
 
         return results

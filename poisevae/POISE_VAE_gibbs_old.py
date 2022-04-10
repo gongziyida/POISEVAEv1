@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from .gibbs_sampler_poise_old import GibbsSampler_Z, GibbsSampler_A
-from .kl_divergence_calculator import KLD
+from .kl_divergence_calculator import KLDDerivative
 from numpy import prod, sqrt
 
 from time import time
@@ -141,7 +141,7 @@ class POISEVAE(nn.Module):
         
         self.gibbs = GibbsSampler_Z(self.latent_dims_flatten, device=self.device)
         # self.gibbs = GibbsSampler_A(*self.latent_dims_flatten, batch_size)
-        self.kl_div = KLD(self.latent_dims_flatten, reduction=self.reduction, device=self.device)
+        self.kl_div = KLDDerivative(self.latent_dims_flatten, reduction=self.reduction, device=self.device)
         
         self.g11 = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g22_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
