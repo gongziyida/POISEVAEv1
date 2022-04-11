@@ -73,7 +73,7 @@ class KLDN01:
 class KLDDerivative:
     __version__ = 2.3 # lambda -> nu
     
-    def __init__(self, latent_dims, reduction, device=_device):
+    def __init__(self, latent_dims, enc_config, reduction, device=_device):
         self.latent_dims = latent_dims
         self.enc_config = enc_config
         self.reduction = reduction
