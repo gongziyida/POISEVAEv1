@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from .gibbs_sampler_poise import GibbsSampler
-from .kl_divergence_calculator import KLDDerivative, KLDN01
+from .kl_divergence_calculator import KLDDerivative, KLDN01, KLGradient
 from numpy import prod, sqrt
 
 from time import time
@@ -224,23 +224,31 @@ class POISEVAE(nn.Module):
             x_rec.append(x_)
         return x_rec
         
-    def _sampling(self, G, param1, param2, t2, n_iterations=5):
+    def _sampling(self, G, param1, param2, t2, n_iterations=50):
         batch_size = self._fetch_batch_size(param1)
         self._batch_size = batch_size
         
-        z_priors = self.gibbs.sample(G, t1s=self.t1, t2s=t2, 
-                                     batch_size=batch_size, n_iterations=n_iterations)
+        z_priors, T_priors = self.gibbs.sample(G, t1s=self.t1, t2s=t2, 
+                                               batch_size=batch_size, n_iterations=n_iterations)
         
         if self.enc_config == 'nu':
-            z_posteriors = self.gibbs.sample(G, nu1=param1, nu2=param2, batch_size=batch_size,
-                                             t1s=self.t1, t2s=t2, n_iterations=n_iterations)
-            kl = self.kl_div.calc(G, z_posteriors, z_priors, nu1=param1, nu2=param2)
+            z_posteriors, T_posteriors = self.gibbs.sample(G, nu1=param1, nu2=param2, 
+                                                           batch_size=batch_size,
+                                                           t1s=self.t1, t2s=t2, 
+                                                           n_iterations=n_iterations)
+            # kl = self.kl_div.calc(G, z_posteriors, z_priors, nu1=param1, nu2=param2)
+            nu = torch.cat([param1[0], param2[0]], -1)
+            nup = torch.cat([param1[1], param2[1]], -1)
             
         elif self.enc_config == 'mu/var':
-            z_posteriors = self.gibbs.sample(G, mu=param1, var=param2, batch_size=batch_size,
-                                             t1s=self.t1, t2s=t2, n_iterations=n_iterations)
-            kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, var=param2)
-        
+            z_posteriors, T_posteriors = self.gibbs.sample(G, mu=param1, var=param2, 
+                                                           batch_size=batch_size,
+                                                           t1s=self.t1, t2s=t2, 
+                                                           n_iterations=n_iterations)
+            # kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, var=param2)
+            nu = torch.cat([param1[0] / param2[0], -0.5 / param2[0]], -1)
+            nup = torch.cat([param1[1] / param2[1], -0.5 / param2[1]], -1)
+        kl = KLGradient.apply(*T_priors, *T_posteriors, G, nu, nup)
         return z_priors, z_posteriors, kl
             
     def get_G(self):
@@ -258,7 +266,7 @@ class POISEVAE(nn.Module):
         t2 = [-torch.exp(t2_hat) for t2_hat in self.t2_hat]
         return self.t1, t2
     
-    def forward(self, x, n_gibbs_iter=15):
+    def forward(self, x, n_gibbs_iter=50):
         """
         Return
         ------

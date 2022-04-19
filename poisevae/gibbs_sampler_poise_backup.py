@@ -54,7 +54,7 @@ class GibbsSampler:
         var = self.var_calc(Tp[:, mid:], nu2, t2)
         mean = self.mean_calc(Tp[:, :mid], var, nu1, t1)
         # assert (var >= 0).all()
-        return mean + torch.sqrt(var) * torch.randn_like(var), T
+        return mean + torch.sqrt(var) * torch.randn_like(var)
         
             
     def init_z(self, mu, var, batch_size):
@@ -73,34 +73,27 @@ class GibbsSampler:
     
     
     def sample(self, G, nu1=None, nu2=None, mu=None, var=None, 
-               t1s=None, t2s=None, n_iterations=1, threshold=10, batch_size=None):
-        with torch.no_grad():
-            nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
+               t1s=None, t2s=None, n_iterations=1, batch_size=None):
+        nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
+            
+        z = self.init_z(mu=mu, var=var, batch_size=batch_size)
 
-            z = self.init_z(mu=mu, var=var, batch_size=batch_size)
-            T = [[], []]
-
-            # TODO: generalize to M > 2
-            for i in range(n_iterations):
-                z[0], T1 = self.value_calc(z[1], G.t(), nu1[0], nu2[0], t1s[0], t2s[0])
-                z[1], T2 = self.value_calc(z[0], G, nu1[1], nu2[1], t1s[1], t2s[1])
-                if i >= n_iterations - threshold:
-                    T[0].append(T1)
-                    T[1].append(T2)
-
-            T = [torch.stack(T[0], 1), torch.stack(T[1], 1)]
-        return z, T
+        # TODO: generalize to M > 2
+        for i in range(n_iterations):
+            z[0] = self.value_calc(z[1], G.t(), nu1[0], nu2[0], t1s[0], t2s[0])
+            z[1] = self.value_calc(z[0], G, nu1[1], nu2[1], t1s[1], t2s[1])
+            
+        return z
     
     
     def sample_generator(self, G, nu1=None, nu2=None, mu=None, var=None, 
                          t1s=None, t2s=None, n_iterations=1, batch_size=None):
-        with torch.no_grad():
-            nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
+        nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
+        
+        z = self.init_z(mu=mu, var=var, batch_size=batch_size)
 
-            z = self.init_z(mu=mu, var=var, batch_size=batch_size)
-
-            # TODO: generalize to M > 2
-            for i in range(n_iterations):
-                z[0], T1 = self.value_calc(z[1], G.t(), nu1[0], nu2[0], t1s[0], t2s[0])
-                z[1], T2 = self.value_calc(z[0], G, nu1[1], nu2[1], t1s[1], t2s[1])
-                yield z
+        # TODO: generalize to M > 2
+        for i in range(n_iterations):
+            z[0] = self.value_calc(z[1], G.t(), nu1[0], nu2[0], t1s[0], t2s[0])
+            z[1] = self.value_calc(z[0], G, nu1[1], nu2[1], t1s[1], t2s[1])
+            yield z
