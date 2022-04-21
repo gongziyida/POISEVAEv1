@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from .gibbs_sampler_poise import GibbsSampler
-from .kl_divergence_calculator import KLDDerivative, KLDN01, KLGradient
+from .kl_divergence_calculator import KLDDerivative, KLDN01
+from .gradient import KLGradient, RecGradient
 from numpy import prod, sqrt
 
 from time import time
@@ -118,9 +119,9 @@ class POISEVAE(nn.Module):
             raise ValueError('`enc_config` value unreconized.')
         if KL_calc not in ('derivative', 'std_normal'): 
             raise ValueError('`KL_calc` value unreconized.')
-        if reduction not in ('mean', 'sum'):
-            raise ValueError('`reduction` must be either "mean" or "sum".')
-        
+        if reduction != 'mean':
+            raise NotImplementedError
+            
         # Get the latent dimensions
         if latent_dims is not None:
             if not hasattr(latent_dims, '__iter__'): # Iterable
@@ -218,13 +219,19 @@ class POISEVAE(nn.Module):
         """
         x_rec = []
         batch_size = z[0].shape[0] if self.batched else 1
+        Gibbs_dim = len(z[0].shape) == 2 + self.batched
+        if Gibbs_dim:
+            n_samples = z[0].shape[self.batched]
+            z = [zi.flatten(0, 1) for zi in z]
         for decoder, zi, ld in zip(self.decoders, z, self.latent_dims):
-            zi = zi.view(batch_size, *ld) # Match the shape to the output
+            zi = zi.view(batch_size * n_samples, *ld) # Match the shape to the output
             x_ = decoder(zi)
+            if Gibbs_dim: # Gibbs dimension
+                x_ = (x_[0].view(batch_size, n_samples, *x_[0].shape[1:]), x_[1])
             x_rec.append(x_)
         return x_rec
         
-    def _sampling(self, G, param1, param2, t2, n_iterations=50):
+    def _sampling(self, G, param1, param2, t2, n_iterations=30):
         batch_size = self._fetch_batch_size(param1)
         self._batch_size = batch_size
         
@@ -248,8 +255,11 @@ class POISEVAE(nn.Module):
             # kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, var=param2)
             nu = torch.cat([param1[0] / param2[0], -0.5 / param2[0]], -1)
             nup = torch.cat([param1[1] / param2[1], -0.5 / param2[1]], -1)
-        kl = KLGradient.apply(*T_priors, *T_posteriors, G, nu, nup)
-        return z_priors, z_posteriors, kl
+            assert torch.isnan(param1[0]).sum() == 0
+            assert torch.isnan(1 / param2[0]).sum() == 0
+            assert torch.isnan(-0.5 / param2[0]).sum() == 0
+        
+        return z_priors, z_posteriors, T_priors, T_posteriors, [nu, nup]
             
     def get_G(self):
         g22 = -torch.exp(self.g22_hat)
@@ -266,7 +276,7 @@ class POISEVAE(nn.Module):
         t2 = [-torch.exp(t2_hat) for t2_hat in self.t2_hat]
         return self.t1, t2
     
-    def forward(self, x, n_gibbs_iter=50):
+    def forward(self, x, n_gibbs_iter=15):
         """
         Return
         ------
@@ -290,20 +300,28 @@ class POISEVAE(nn.Module):
             param1, param2 = self.encode(self.mask_missing(x))
         else:
             param1, param2 = self.encode(x)
+        assert torch.isnan(param1[0]).sum() == 0
         
         G = self.get_G()
         _, t2 = self.get_t()
     
-        z_priors, z_posteriors, kl = self._sampling(G, param1, param2, t2, 
-                                                    n_iterations=n_gibbs_iter)
-        # assert torch.isnan(z_priors[0]).sum() == 0
-        # assert torch.isnan(z_priors[1]).sum() == 0
-        # assert torch.isnan(z_posteriors[0]).sum() == 0
-        # assert torch.isnan(z_posteriors[1]).sum() == 0
+        z_priors, z_posteriors, T_priors, T_posteriors, nus = self._sampling(G, param1, param2, t2, 
+                                                                             n_iterations=n_gibbs_iter)
+        
+        assert torch.isnan(G).sum() == 0
+        assert torch.isnan(nus[0]).sum() == 0
+        assert torch.isnan(nus[1]).sum() == 0
+        assert torch.isnan(z_priors[0]).sum() == 0
+        assert torch.isnan(z_priors[1]).sum() == 0
+        assert torch.isnan(z_posteriors[0]).sum() == 0
+        assert torch.isnan(z_posteriors[1]).sum() == 0
 
         x_rec = self.decode(z_posteriors) # Decoding
-
-        # Reconstruction loss term
+        assert torch.isnan(x_rec[0][0]).sum() == 0
+        assert torch.isnan(x_rec[1][0]).sum() == 0
+        
+        # Reconstruction loss term *for decoder*
+        dec_rec_loss = 0
         if hasattr(self, 'loss'):
             recs = [loss_func(x_rec[i], x[i]) for i, loss_func in enumerate(self.loss)]
         else:
@@ -313,27 +331,32 @@ class POISEVAE(nn.Module):
                 if x[i] is None:
                     recs.append(torch.tensor(0).to(self.device, G.dtype))
                 else:
-                    negative_loglike = -x_rec[i].log_prob(x[i]).sum()
-                    if self.reduction == 'mean':
-                        negative_loglike /= batch_size
-                    recs.append(negative_loglike)
+                    dims = list(range(2, len(x_rec[i].loc.shape)))
+                    negative_loglike = -x_rec[i].log_prob(x[i].unsqueeze(1)).sum(dims)
+                    if self.rec_weights is not None: # Modality weighting
+                        negative_loglike *= self.rec_weights[i]
+                    dec_rec_loss += negative_loglike
+                    recs.append(negative_loglike.detach().sum()) # For loggging 
         
-        rec_loss = 0
-        for i in range(self.M):
-            rec_loss += recs[i] if self.rec_weights is None else self.rec_weights[i] * recs[i]
-        
+        kl = KLGradient.apply(*T_priors, *T_posteriors, G, *nus)
+        enc_rec_loss = RecGradient.apply(*T_posteriors, G, *nus, dec_rec_loss)
         # Total loss
-        total_loss = kl + rec_loss
+        total_loss = kl + dec_rec_loss.mean() + enc_rec_loss
 
+        # These will then be used for logging only. Don't waste CUDA memory!
+        z_posteriors = [i[:, -1].detach().cpu() for i in z_posteriors]
+        x_rec = [i.loc[:, -1].detach().cpu() for i in x_rec]
+        param1 = [i.detach().cpu() for i in param1]
+        param2 = [i.detach().cpu() for i in param2]
         results = {
-            'z': z_posteriors, 'x_rec': x_rec, 'param1': param1, 'param2': param2, 
+            'z': z_posteriors, 'x_rec': x_rec, 'param1': param1, 'param2': param2,
             'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': kl
         }
-
+        
         return results
 
     
-    def generate(self, n_samples, n_gibbs_iter=50):
+    def generate(self, n_samples, n_gibbs_iter=15):
         self._batch_size = n_samples
         G = self.get_G()
         _, t2 = self.get_t()
