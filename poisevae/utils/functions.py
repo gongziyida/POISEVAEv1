@@ -56,6 +56,7 @@ def train(model, joint_dataloader, optimizer, epoch, writer=None,
             results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
             
         results['total_loss'].backward() 
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), 1e4)
         optimizer.step()
         _log(results, 'train', writer, epoch * len(joint_dataloader) + k)
         

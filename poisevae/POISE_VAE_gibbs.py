@@ -1,4 +1,5 @@
 import torch
+torch.manual_seed(2)
 import torch.nn as nn
 from .gibbs_sampler_poise import GibbsSampler
 from .kl_divergence_calculator import KLDDerivative, KLDN01
@@ -256,9 +257,8 @@ class POISEVAE(nn.Module):
             nu = torch.cat([param1[0] / param2[0], -0.5 / param2[0]], -1)
             nup = torch.cat([param1[1] / param2[1], -0.5 / param2[1]], -1)
             assert torch.isnan(param1[0]).sum() == 0
-            assert torch.isnan(1 / param2[0]).sum() == 0
             assert torch.isnan(-0.5 / param2[0]).sum() == 0
-        
+            
         return z_priors, z_posteriors, T_priors, T_posteriors, [nu, nup]
             
     def get_G(self):
@@ -300,6 +300,11 @@ class POISEVAE(nn.Module):
             param1, param2 = self.encode(self.mask_missing(x))
         else:
             param1, param2 = self.encode(x)
+        print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
+        print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
+        print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
+        print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
+        print()
         assert torch.isnan(param1[0]).sum() == 0
         
         G = self.get_G()
