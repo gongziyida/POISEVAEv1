@@ -91,7 +91,7 @@ class KLDDerivative:
                     raise RuntimeError('Unmatched nus')
                 nus.append(torch.zeros_like(T_posts[-1]))
             else:
-                nus.append(torch.cat((nu1[i], nu2[i]), -1))
+                nus.append(torch.cat((nu1[i], nu2[i]), -1).unsqueeze(1))
             
         # TODO: make it generic for > 2 latent spaces
         batch_size = z[0].shape[0]
@@ -103,14 +103,14 @@ class KLDDerivative:
         T1_post_unsq  = T_posts[0].unsqueeze(-1) 
         T2_post_unsq  = T_posts[1].unsqueeze(-2)
         
-        T_prior_kron = T1_prior_unsq * T2_prior_unsq
-        T_post_kron = T1_post_unsq * T2_post_unsq
+        T_prior_kron = (T1_prior_unsq * T2_prior_unsq).mean(1)
+        T_post_kron = (T1_post_unsq * T2_post_unsq).mean(1)
         
-        part0 = (nus[0] * T_posts[0]).sum(dim=-1) + \
-                (nus[1] * T_posts[1]).sum(dim=-1)
+        part0 = (nus[0] * T_posts[0]).sum(dim=-1).mean(1) + \
+                (nus[1] * T_posts[1]).sum(dim=-1).mean(1)
         
-        part1 = -(nus[0] * T_posts[0].detach()).sum(dim=-1) - \
-                (nus[1] * T_posts[1].detach()).sum(dim=-1)
+        part1 = -(nus[0] * T_posts[0].detach()).sum(dim=-1).mean(1) - \
+                (nus[1] * T_posts[1].detach()).sum(dim=-1).mean(1)
         
         part2 = (T_prior_kron.detach() * G).sum(dim=(-1, -2)) - \
                 (T_post_kron.detach() * G).sum(dim=(-1, -2))

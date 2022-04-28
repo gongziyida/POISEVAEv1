@@ -244,22 +244,19 @@ class POISEVAE(nn.Module):
                                                            batch_size=batch_size,
                                                            t1s=self.t1, t2s=t2, 
                                                            n_iterations=n_iterations)
-            # kl = self.kl_div.calc(G, z_posteriors, z_priors, nu1=param1, nu2=param2)
-            nu = torch.cat([param1[0], param2[0]], -1)
-            nup = torch.cat([param1[1], param2[1]], -1)
+            kl = self.kl_div.calc(G, z_posteriors, z_priors, nu1=param1, nu2=param2)
             
         elif self.enc_config == 'mu/var':
             z_posteriors, T_posteriors = self.gibbs.sample(G, mu=param1, var=param2, 
                                                            batch_size=batch_size,
                                                            t1s=self.t1, t2s=t2, 
                                                            n_iterations=n_iterations)
-            # kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, var=param2)
-            nu = torch.cat([param1[0] / param2[0], -0.5 / param2[0]], -1)
-            nup = torch.cat([param1[1] / param2[1], -0.5 / param2[1]], -1)
-            assert torch.isnan(param1[0]).sum() == 0
-            assert torch.isnan(-0.5 / param2[0]).sum() == 0
+            kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, var=param2)
+            if param1[0] is not None and param1[1] is not None:
+                assert torch.isnan(param1[0]).sum() == 0
+                assert torch.isnan(-0.5 / param2[0]).sum() == 0
             
-        return z_priors, z_posteriors, T_priors, T_posteriors, [nu, nup]
+        return z_posteriors, kl
             
     def get_G(self):
         g22 = -torch.exp(self.g22_hat)
@@ -300,24 +297,19 @@ class POISEVAE(nn.Module):
             param1, param2 = self.encode(self.mask_missing(x))
         else:
             param1, param2 = self.encode(x)
-        print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
-        print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
-        print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
-        print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
-        print()
-        assert torch.isnan(param1[0]).sum() == 0
+        if param1[0] is not None and param1[1] is not None:
+            print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
+            print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
+            print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
+            print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
+            assert torch.isnan(param1[0]).sum() == 0
         
         G = self.get_G()
         _, t2 = self.get_t()
     
-        z_priors, z_posteriors, T_priors, T_posteriors, nus = self._sampling(G, param1, param2, t2, 
-                                                                             n_iterations=n_gibbs_iter)
+        z_posteriors, kl = self._sampling(G, param1, param2, t2, n_iterations=n_gibbs_iter)
         
         assert torch.isnan(G).sum() == 0
-        assert torch.isnan(nus[0]).sum() == 0
-        assert torch.isnan(nus[1]).sum() == 0
-        assert torch.isnan(z_priors[0]).sum() == 0
-        assert torch.isnan(z_priors[1]).sum() == 0
         assert torch.isnan(z_posteriors[0]).sum() == 0
         assert torch.isnan(z_posteriors[1]).sum() == 0
 
@@ -343,21 +335,25 @@ class POISEVAE(nn.Module):
                     dec_rec_loss += negative_loglike
                     recs.append(negative_loglike.detach().sum()) # For loggging 
         
-        kl = KLGradient.apply(*T_priors, *T_posteriors, G, *nus)
-        enc_rec_loss = RecGradient.apply(*T_posteriors, G, *nus, dec_rec_loss)
         # Total loss
-        total_loss = kl + dec_rec_loss.mean() + enc_rec_loss
+        if x[0] is None and x[1] is None: # No rec loss
+            total_loss = kl
+        else:
+            total_loss = kl + dec_rec_loss.mean() * 0.1
 
         # These will then be used for logging only. Don't waste CUDA memory!
         z_posteriors = [i[:, -1].detach().cpu() for i in z_posteriors]
         x_rec = [i.loc[:, -1].detach().cpu() for i in x_rec]
-        param1 = [i.detach().cpu() for i in param1]
-        param2 = [i.detach().cpu() for i in param2]
+        param1 = [i.detach().cpu() if i is not None else None for i in param1]
+        param2 = [i.detach().cpu() if i is not None else None for i in param2]
         results = {
             'z': z_posteriors, 'x_rec': x_rec, 'param1': param1, 'param2': param2,
             'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': kl
         }
-        
+        if param1[0] is not None and param1[1] is not None:
+            print('total loss:', total_loss.item(), 'kl term:', kl.item())
+            print('rec1 loss:', recs[0].item(), 'rec2 loss:', recs[1].item())
+            print()
         return results
 
     

@@ -75,26 +75,26 @@ class GibbsSampler:
     
     def sample(self, G, nu1=None, nu2=None, mu=None, var=None, 
                t1s=None, t2s=None, n_iterations=30, n_samples=10, batch_size=None):
-        with torch.no_grad():
-            nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
+        # with torch.no_grad():
+        nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
 
-            z1, z2 = self.init_z(mu=mu, var=var, batch_size=batch_size)
-            assert len(z1.shape) == 2
-            assert len(z2.shape) == 2
-            z = [torch.zeros(z1.shape[0], n_samples, z1.shape[1]).to(z1.device), 
-                 torch.zeros(z2.shape[0], n_samples, z2.shape[1]).to(z2.device)]
-            T = [torch.zeros(*z[0].shape[:-1], z1.shape[1] * 2).to(z1.device), 
-                 torch.zeros(*z[1].shape[:-1], z2.shape[1] * 2).to(z2.device)]
+        z1, z2 = self.init_z(mu=mu, var=var, batch_size=batch_size)
+        assert len(z1.shape) == 2
+        assert len(z2.shape) == 2
+        z = [torch.zeros(z1.shape[0], n_samples, z1.shape[1]).to(z1.device), 
+             torch.zeros(z2.shape[0], n_samples, z2.shape[1]).to(z2.device)]
+        T = [torch.zeros(*z[0].shape[:-1], z1.shape[1] * 2).to(z1.device), 
+             torch.zeros(*z[1].shape[:-1], z2.shape[1] * 2).to(z2.device)]
 
-            for i in range(n_iterations):
-                z1, T1 = self.value_calc(z2, G.t(), nu1[0], nu2[0], t1s[0], t2s[0])
-                z2, T2 = self.value_calc(z1, G, nu1[1], nu2[1], t1s[1], t2s[1])
-                if i >= n_iterations - n_samples:
-                    k = i - (n_iterations - n_samples)
-                    z[0][:, k] = z1
-                    z[1][:, k] = z2
-                    T[0][:, k] = T1
-                    T[1][:, k] = T2
+        for i in range(n_iterations):
+            z1, T1 = self.value_calc(z2, G.t(), nu1[0], nu2[0], t1s[0], t2s[0])
+            z2, T2 = self.value_calc(z1, G, nu1[1], nu2[1], t1s[1], t2s[1])
+            if i >= n_iterations - n_samples:
+                k = i - (n_iterations - n_samples)
+                z[0][:, k] = z1
+                z[1][:, k] = z2
+                T[0][:, k] = T1
+                T[1][:, k] = T2
 
         return z, T
     
