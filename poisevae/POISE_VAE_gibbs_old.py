@@ -282,7 +282,7 @@ class POISEVAE(nn.Module):
         return G
     
     def get_t(self):
-        t2 = [-torch.exp(t2_hat) for t2_hat in self.t2_hat]
+        t2 = [-0.5 * torch.exp(t2_hat) for t2_hat in self.t2_hat]
         return self.t1, t2
     
     def forward(self, x, n_gibbs_iter=15):

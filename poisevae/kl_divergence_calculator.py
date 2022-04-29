@@ -89,10 +89,14 @@ class KLDDerivative:
             if nu1[i] is None: 
                 if nu2[i] is not None:
                     raise RuntimeError('Unmatched nus')
-                nus.append(torch.zeros_like(T_posts[-1]))
+                
+                nus.append(torch.zeros(T_posts[-1].shape[0], T_posts[-1].shape[2]).to(self.device))
             else:
-                nus.append(torch.cat((nu1[i], nu2[i]), -1).unsqueeze(1))
-            
+                nus.append(torch.cat((nu1[i], nu2[i]), -1))
+        print('zpost max:', torch.abs(z[0]).max().item(), 'zpost mean:', torch.abs(z[0]).mean().item())
+        print('zpostp max:', torch.abs(z[1]).max().item(), 'zpostp mean:', torch.abs(z[1]).mean().item())
+        print('zprior max:', torch.abs(z_priors[0]).max().item(), 'zprior mean:', torch.abs(z_priors[0]).mean().item())
+        print('zpriorp max:', torch.abs(z_priors[1]).max().item(), 'zpriorp mean:', torch.abs(z_priors[1]).mean().item())
         # TODO: make it generic for > 2 latent spaces
         batch_size = z[0].shape[0]
         if z[1].shape[0] != batch_size:
@@ -103,23 +107,25 @@ class KLDDerivative:
         T1_post_unsq  = T_posts[0].unsqueeze(-1) 
         T2_post_unsq  = T_posts[1].unsqueeze(-2)
         
-        T_prior_kron = (T1_prior_unsq * T2_prior_unsq).mean(1)
-        T_post_kron = (T1_post_unsq * T2_post_unsq).mean(1)
+        T_prior_outer = (T1_prior_unsq * T2_prior_unsq).mean(1)
+        T_post_outer = (T1_post_unsq * T2_post_unsq).mean(1)
         
-        part0 = (nus[0] * T_posts[0]).sum(dim=-1).mean(1) + \
-                (nus[1] * T_posts[1]).sum(dim=-1).mean(1)
+        T_post_mean = [T_posts[0].mean(1), T_posts[1].mean(1)]
         
-        part1 = -(nus[0] * T_posts[0].detach()).sum(dim=-1).mean(1) - \
-                (nus[1] * T_posts[1].detach()).sum(dim=-1).mean(1)
+        part0 = (nus[0] * T_post_mean[0]).sum(dim=-1) + \
+                (nus[1] * T_post_mean[1]).sum(dim=-1)
         
-        part2 = (T_prior_kron.detach() * G).sum(dim=(-1, -2)) - \
-                (T_post_kron.detach() * G).sum(dim=(-1, -2))
+        part1 = (nus[0] * T_post_mean[0].detach()).sum(dim=-1) + \
+                (nus[1] * T_post_mean[1].detach()).sum(dim=-1)
+        
+        part2 = (T_prior_outer.detach() * G).sum(dim=(-1, -2)) - \
+                (T_post_outer.detach() * G).sum(dim=(-1, -2))
         
         assert len(part0.shape) == 1 and len(part1.shape) == 1 and len(part2.shape) == 1
         if self.reduction == 'mean':
-            return part0.mean() + part1.mean() + part2.mean()
+            return part0.mean() - part1.mean() + part2.mean()
         elif self.reduction == 'sum':
-            return part0.sum() + part1.sum() + part2.sum()
+            return part0.sum() - part1.sum() + part2.sum()
         else:
             return part0 + part1 + part2
     

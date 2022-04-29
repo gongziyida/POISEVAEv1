@@ -236,20 +236,20 @@ class POISEVAE(nn.Module):
         batch_size = self._fetch_batch_size(param1)
         self._batch_size = batch_size
         
-        z_priors, T_priors = self.gibbs.sample(G, t1s=self.t1, t2s=t2, 
+        z_priors, T_priors = self.gibbs.sample(G, t1=self.t1, t2=t2, 
                                                batch_size=batch_size, n_iterations=n_iterations)
         
         if self.enc_config == 'nu':
             z_posteriors, T_posteriors = self.gibbs.sample(G, nu1=param1, nu2=param2, 
                                                            batch_size=batch_size,
-                                                           t1s=self.t1, t2s=t2, 
+                                                           t1=self.t1, t2=t2, 
                                                            n_iterations=n_iterations)
             kl = self.kl_div.calc(G, z_posteriors, z_priors, nu1=param1, nu2=param2)
             
         elif self.enc_config == 'mu/var':
             z_posteriors, T_posteriors = self.gibbs.sample(G, mu=param1, var=param2, 
                                                            batch_size=batch_size,
-                                                           t1s=self.t1, t2s=t2, 
+                                                           t1=self.t1, t2=t2, 
                                                            n_iterations=n_iterations)
             kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, var=param2)
             if param1[0] is not None and param1[1] is not None:
@@ -270,7 +270,7 @@ class POISEVAE(nn.Module):
         return G
     
     def get_t(self):
-        t2 = [-torch.exp(t2_hat) for t2_hat in self.t2_hat]
+        t2 = [-0.5 * torch.exp(t2_hat) for t2_hat in self.t2_hat]
         return self.t1, t2
     
     def forward(self, x, n_gibbs_iter=15):
@@ -307,7 +307,7 @@ class POISEVAE(nn.Module):
         G = self.get_G()
         _, t2 = self.get_t()
     
-        z_posteriors, kl = self._sampling(G, param1, param2, t2, n_iterations=n_gibbs_iter)
+        z_posteriors, kl = self._sampling(G.detach(), param1, param2, t2, n_iterations=n_gibbs_iter)
         
         assert torch.isnan(G).sum() == 0
         assert torch.isnan(z_posteriors[0]).sum() == 0
@@ -339,10 +339,10 @@ class POISEVAE(nn.Module):
         if x[0] is None and x[1] is None: # No rec loss
             total_loss = kl
         else:
-            total_loss = kl + dec_rec_loss.mean() * 0.1
+            total_loss = kl + dec_rec_loss.mean() 
 
         # These will then be used for logging only. Don't waste CUDA memory!
-        z_posteriors = [i[:, -1].detach().cpu() for i in z_posteriors]
+        # z_posteriors = [i[:, -1].detach().cpu() for i in z_posteriors]
         x_rec = [i.loc[:, -1].detach().cpu() for i in x_rec]
         param1 = [i.detach().cpu() if i is not None else None for i in param1]
         param2 = [i.detach().cpu() if i is not None else None for i in param2]
@@ -352,7 +352,8 @@ class POISEVAE(nn.Module):
         }
         if param1[0] is not None and param1[1] is not None:
             print('total loss:', total_loss.item(), 'kl term:', kl.item())
-            print('rec1 loss:', recs[0].item(), 'rec2 loss:', recs[1].item())
+            print('rec1 loss:', recs[0].item() / batch_size / n_gibbs_iter, 
+                  'rec2 loss:', recs[1].item() / batch_size / n_gibbs_iter)
             print()
         return results
 

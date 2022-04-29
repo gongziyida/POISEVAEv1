@@ -54,31 +54,37 @@ class GibbsSampler:
         
         var = self.var_calc(Tp[:, mid:], nu2, t2)
         mean = self.mean_calc(Tp[:, :mid], var, nu1, t1)
+        print('condvar min:', torch.abs(var).min().item(), 'condvar mean:', torch.abs(var).mean().item())
         # assert (var >= 0).all()
-        return mean + torch.sqrt(var) * torch.randn_like(var), T
+        new_z = mean + torch.sqrt(var) * torch.randn_like(var)
+        T = torch.cat((new_z, torch.square(new_z)), 1)
+        return new_z, T
         
             
-    def init_z(self, mu, var, batch_size):
+    def init_z(self, nu1, nu2, t1, t2, batch_size):
         z = []
-        for ld, mu_i, var_i in zip(self.latent_dims, mu, var):
-            if (mu_i is None) and (var_i is None): # all none
+        for ld, nu1_i, nu2_i, t1_i, t2_i in zip(self.latent_dims, nu1, nu2, t1, t2):
+            if (nu1_i is None) and (nu2_i is None): # the Nones come together
                 if batch_size is None:
                     raise RuntimeError('batch_size must be specified for prior.')
-                z.append(torch.randn(batch_size, ld).to(self.device, self.dtype).detach())
-            
+                var = -torch.reciprocal(2 * t2_i)
+                mu = var * t1_i
+                rand = torch.randn(batch_size, ld).to(self.device, self.dtype).detach()
             else:
-                if not (var_i > 0).all():
+                if not (nu2_i < 0).all():
                     raise ValueError('Invalid variance')
-                z.append(mu_i + torch.sqrt(var_i) * torch.randn_like(var_i).detach())
+                var = -torch.reciprocal(2 * (t2_i + nu2_i))
+                mu = var * (nu1_i + t1_i)
+                rand = torch.randn_like(mu)
+            z.append(mu + rand * torch.sqrt(var))
         return z
     
     
     def sample(self, G, nu1=None, nu2=None, mu=None, var=None, 
-               t1s=None, t2s=None, n_iterations=30, n_samples=10, batch_size=None):
-        # with torch.no_grad():
+               t1=None, t2=None, n_iterations=30, n_samples=10, batch_size=None):
         nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
 
-        z1, z2 = self.init_z(mu=mu, var=var, batch_size=batch_size)
+        z1, z2 = self.init_z(nu1, nu2, t1, t2, batch_size=batch_size)
         assert len(z1.shape) == 2
         assert len(z2.shape) == 2
         z = [torch.zeros(z1.shape[0], n_samples, z1.shape[1]).to(z1.device), 
@@ -87,8 +93,8 @@ class GibbsSampler:
              torch.zeros(*z[1].shape[:-1], z2.shape[1] * 2).to(z2.device)]
 
         for i in range(n_iterations):
-            z1, T1 = self.value_calc(z2, G.t(), nu1[0], nu2[0], t1s[0], t2s[0])
-            z2, T2 = self.value_calc(z1, G, nu1[1], nu2[1], t1s[1], t2s[1])
+            z1, T1 = self.value_calc(z2, G.t(), nu1[0], nu2[0], t1[0], t2[0])
+            z2, T2 = self.value_calc(z1, G, nu1[1], nu2[1], t1[1], t2[1])
             if i >= n_iterations - n_samples:
                 k = i - (n_iterations - n_samples)
                 z[0][:, k] = z1
@@ -100,7 +106,7 @@ class GibbsSampler:
     
     
     def sample_generator(self, G, nu1=None, nu2=None, mu=None, var=None, 
-                         t1s=None, t2s=None, n_iterations=1, batch_size=None):
+                         t1=None, t2=None, n_iterations=1, batch_size=None):
         with torch.no_grad():
             nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
 
@@ -108,6 +114,6 @@ class GibbsSampler:
 
             # TODO: generalize to M > 2
             for i in range(n_iterations):
-                z[0], T1 = self.value_calc(z[1], G.t(), nu1[0], nu2[0], t1s[0], t2s[0])
-                z[1], T2 = self.value_calc(z[0], G, nu1[1], nu2[1], t1s[1], t2s[1])
+                z[0], T1 = self.value_calc(z[1], G.t(), nu1[0], nu2[0], t1[0], t2[0])
+                z[1], T2 = self.value_calc(z[0], G, nu1[1], nu2[1], t1[1], t2[1])
                 yield z
