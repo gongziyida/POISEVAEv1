@@ -19,7 +19,7 @@ def _log(results, mode, writer, epoch):
 
     
     
-def train(model, joint_dataloader, optimizer, epoch, writer=None,
+def train(model, joint_dataloader, optimizer, epoch, kl_weight, writer=None,
           mask_missing=None, device=_device, dtype=torch.float32):
     '''
     Parameters
@@ -51,9 +51,9 @@ def train(model, joint_dataloader, optimizer, epoch, writer=None,
         optimizer.zero_grad()
         if mask_missing is not None:
             results = model(mask_missing(
-                [data[i].to(device=device, dtype=dtype) for i in range(model.M)]))
+                [data[i].to(device=device, dtype=dtype) for i in range(model.M)]), kl_weight=kl_weight)
         else:
-            results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
+            results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)], kl_weight=kl_weight)
             
         results['total_loss'].backward() 
         torch.nn.utils.clip_grad_norm_(model.parameters(), 50)

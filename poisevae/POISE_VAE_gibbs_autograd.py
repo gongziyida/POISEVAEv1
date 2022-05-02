@@ -273,7 +273,7 @@ class POISEVAE(nn.Module):
         t2 = [-0.5 * torch.exp(t2_hat) for t2_hat in self.t2_hat]
         return self.t1, t2
     
-    def forward(self, x, n_gibbs_iter=15):
+    def forward(self, x, n_gibbs_iter=15, kl_weight=1):
         """
         Return
         ------
@@ -337,9 +337,9 @@ class POISEVAE(nn.Module):
         
         # Total loss
         if x[0] is None and x[1] is None: # No rec loss
-            total_loss = kl
+            total_loss = kl_weight * kl
         else:
-            total_loss = kl + dec_rec_loss.mean() 
+            total_loss = kl_weight * kl + dec_rec_loss.mean() 
 
         # These will then be used for logging only. Don't waste CUDA memory!
         # z_posteriors = [i[:, -1].detach().cpu() for i in z_posteriors]

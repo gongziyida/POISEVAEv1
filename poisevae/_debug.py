@@ -46,7 +46,7 @@ def read_debug_log(fname):
 
     p_G = re.compile(r'dG[12][12].[a-zA-Z]+')
     p_k = re.compile(r'[a-zA-Z]+[12]?p?.[a-zA-Z]+')
-    p_v = re.compile(r'([0-9]\.[0-9]+e[+\-][0-9]+)|([0-9]+\.[0-9]+)')
+    p_v = re.compile(r'([-]?[0-9]\.[0-9]+e[+\-][0-9]+)|([-]?[0-9]+\.[0-9]+)')
 
     d = {'k': [], 'v': [], 'i': []}
     def add(k, v):
