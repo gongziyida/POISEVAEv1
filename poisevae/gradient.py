@@ -11,13 +11,16 @@ class KLGradient(torch.autograd.Function):
         G: torch.Tensor
             Shape: (batch, latent_dim * 2, latent_dim * 2)
         """
-        ctx.save_for_backward(T_p, Tp_p, T_q, Tp_q, nu, nup)
+        ctx.save_for_backward(nu, nup)
+        ctx.T_p, ctx.Tp_p, ctx.T_q, ctx.Tp_q = T_p, Tp_p, T_q, Tp_q
         return torch.tensor([0.0], requires_grad=True, device=G.device, dtype=G.dtype)
 
     @staticmethod
-    def backward(ctx, _):
+    def backward(ctx, w):
+        assert w == 10, w
         with torch.no_grad():
-            T_p, Tp_p, T_q, Tp_q, nu, nup = ctx.saved_tensors 
+            T_p, Tp_p, T_q, Tp_q = ctx.T_p, ctx.Tp_p, ctx.T_q, ctx.Tp_q
+            nu, nup = ctx.saved_tensors 
             T_q_diff, Tp_q_diff = T_q - T_q.mean(1, keepdim=True), Tp_q - Tp_q.mean(1, keepdim=True)
             cov = torch.bmm(T_q_diff.transpose(1, 2), T_q_diff) / (T_q.shape[1] - 1)
             covp = torch.bmm(Tp_q_diff.transpose(1, 2), Tp_q_diff) / (Tp_q.shape[1] - 1)
@@ -40,7 +43,7 @@ class KLGradient(torch.autograd.Function):
             # print('# dnu2 < 0', (dnu[..., dnu.shape[-1]//2:] < 0).sum(), (dnup[..., dnu.shape[-1]//2:] < 0).sum())
             # print((dnu > 0).sum(), (dnu < 0).sum(), ';', (dnup > 0).sum(), (dnup < 0).sum())
             # print('dnu', dnu.detach().sum().item(), nu.detach().sum().item(), cov.detach().sum().item())
-            return None, None, None, None, dG, dnu, dnup
+            return None, None, None, None, w * dG, w * dnu, w * dnup
             # return None, None, None, None, None, None, None
         
         
@@ -57,13 +60,15 @@ class RecGradient(torch.autograd.Function):
         loglike: torch.Tensor
             Shape: (batch, n_iter); correspond to the Gibbs sample used for reconstruction
         """
-        ctx.save_for_backward(T_q, Tp_q, nu, nup, loglike.unsqueeze(-1))
+        ctx.save_for_backward(nu, nup)
+        ctx.loglike, ctx.T_q, ctx.Tp_q = loglike.unsqueeze(-1), T_q, Tp_q
         return torch.tensor([0.0], requires_grad=True, device=G.device, dtype=G.dtype)
     @staticmethod
-    def backward(ctx, _):
+    def backward(ctx, w):
         with torch.no_grad():
             # Notice that T's shape (batch, n_iter, latent_dim)
-            T_q, Tp_q, nu, nup, loglike = ctx.saved_tensors 
+            nu, nup = ctx.saved_tensors 
+            loglike, T_q, Tp_q = ctx.loglike, ctx.T_q, ctx.Tp_q
             dG = (T_q.unsqueeze(-1) * Tp_q.unsqueeze(-2) * loglike.unsqueeze(-1)).mean(1)
             dnu = (T_q * loglike).mean(1)
             dnup = (Tp_q * loglike).mean(1)
@@ -76,5 +81,5 @@ class RecGradient(torch.autograd.Function):
             print('dnu1p Rec', torch.abs(dnup[..., :dnup.shape[-1]//2]).mean().item(), 
                   'dnu2p Rec', torch.abs(dnup[..., dnup.shape[-1]//2:]).mean().item())
             # print((dnu[..., dnu.shape[-1]//2:] < 0).sum(), (dnup[..., dnu.shape[-1]//2:] < 0).sum())
-            return None, None, dG, dnu, dnup, None
+            return None, None, w * dG, w * dnu, w * dnup, None
             # return None, None, None, None, None, None

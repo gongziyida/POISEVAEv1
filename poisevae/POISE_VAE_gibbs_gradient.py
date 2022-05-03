@@ -229,7 +229,7 @@ class POISEVAE(nn.Module):
         self._batch_size = batch_size
         
         with torch.no_grad():
-            z_priors, T_priors = self.gibbs.sample(G, t1=self.t1, t2=t2, 
+            z_priors, T_priors = self.gibbs.sample(G.detach(), t1=self.t1, t2=t2, 
                                                    batch_size=batch_size, n_iterations=n_iterations)
         
         if self.enc_config == 'nu':
@@ -269,7 +269,7 @@ class POISEVAE(nn.Module):
         t2 = [-0.5 * torch.exp(t2_hat) for t2_hat in self.t2_hat]
         return self.t1, t2
     
-    def forward(self, x, n_gibbs_iter=15):
+    def forward(self, x, n_gibbs_iter=15, kl_weight=1):
         """
         Return
         ------
@@ -338,12 +338,12 @@ class POISEVAE(nn.Module):
                     recs.append(negative_loglike.detach().sum()) # For loggging 
         
         kl = KLGradient.apply(*T_priors, *T_posteriors, G, *nus)
-        enc_rec_loss = RecGradient.apply(*T_posteriors, G, *nus, dec_rec_loss)
+        enc_rec_loss = RecGradient.apply(*T_posteriors, G, *nus, dec_rec_loss.detach())
         # Total loss
         if x[0] is None and x[1] is None: # No rec loss
-            total_loss = kl
+            total_loss = kl_weight * kl
         else:
-            total_loss = kl + (dec_rec_loss.mean() + enc_rec_loss) * 1
+            total_loss = kl_weight * kl + dec_rec_loss.mean() + enc_rec_loss
 
         # These will then be used for logging only. Don't waste CUDA memory!
         z_posteriors = [i[:, -1].detach().cpu() for i in z_posteriors]
