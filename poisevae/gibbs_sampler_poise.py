@@ -55,7 +55,7 @@ class GibbsSampler:
         var = self.var_calc(Tp[:, mid:], nu2, t2)
         mean = self.mean_calc(Tp[:, :mid], var, nu1, t1)
         print('condvar min:', torch.abs(var).min().item(), 'condvar mean:', torch.abs(var).mean().item())
-        # assert (var >= 0).all()
+        assert (var >= 0).all(), 't2 %s\nT2%s' % ((Tp[:, mid:] > 0).sum().item(), (Tp[:, mid:] < 0).sum().item())
         new_z = mean + torch.sqrt(var) * torch.randn_like(var)
         T = torch.cat((new_z, torch.square(new_z)), 1)
         return new_z, T

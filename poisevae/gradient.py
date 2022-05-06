@@ -17,7 +17,6 @@ class KLGradient(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, w):
-        assert w == 10, w
         with torch.no_grad():
             T_p, Tp_p, T_q, Tp_q = ctx.T_p, ctx.Tp_p, ctx.T_q, ctx.Tp_q
             nu, nup = ctx.saved_tensors 
@@ -69,9 +68,10 @@ class RecGradient(torch.autograd.Function):
             # Notice that T's shape (batch, n_iter, latent_dim)
             nu, nup = ctx.saved_tensors 
             loglike, T_q, Tp_q = ctx.loglike, ctx.T_q, ctx.Tp_q
-            dG = (T_q.unsqueeze(-1) * Tp_q.unsqueeze(-2) * loglike.unsqueeze(-1)).mean(1)
-            dnu = (T_q * loglike).mean(1)
-            dnup = (Tp_q * loglike).mean(1)
+            dG = (T_q.unsqueeze(-1) * Tp_q.unsqueeze(-2) * loglike.unsqueeze(-1)).mean(1) - \
+                 (T_q.unsqueeze(-1) * Tp_q.unsqueeze(-2)).mean(1) * loglike.unsqueeze(-1).mean(1)
+            dnu = (T_q * loglike).mean(1) - T_q.mean(1) * loglike.mean(1)
+            dnup = (Tp_q * loglike).mean(1) - Tp_q.mean(1) * loglike.mean(1)
             print('dG11 Rec', torch.abs(dG[:, :dG.shape[1]//2, :dG.shape[2]//2]).mean().item(), 
                   'dG12 Rec', torch.abs(dG[:, :dG.shape[1]//2, dG.shape[2]//2:]).mean().item())
             print('dG21 Rec', torch.abs(dG[:, dG.shape[1]//2:, :dG.shape[2]//2]).mean().item(), 

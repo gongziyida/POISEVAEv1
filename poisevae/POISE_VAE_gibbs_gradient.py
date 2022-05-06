@@ -255,11 +255,12 @@ class POISEVAE(nn.Module):
         return z_priors, z_posteriors, T_priors, T_posteriors, [nu, nup]
             
     def get_G(self):
+        d = sum(self.latent_dims_flatten)
         g22 = -torch.exp(self.g22_hat)
-        g12 = 2 / sqrt(self.latent_dims_flatten[0]) * \
+        g12 = 2 / sqrt(d) * \
               torch.exp(self.g22_hat / 2 + self.t2_hat[1].unsqueeze(0) / 2) * \
               torch.tanh(self.g12_hat)
-        g21 = 2 / sqrt(self.latent_dims_flatten[1]) * \
+        g21 = 2 / sqrt(d) * \
               torch.exp(self.g22_hat / 2 + self.t2_hat[0].unsqueeze(1) / 2) * \
               torch.tanh(self.g21_hat)
         G = torch.cat((torch.cat((self.g11, g12), 1), torch.cat((g21, g22), 1)), 0)
