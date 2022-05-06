@@ -54,8 +54,8 @@ class GibbsSampler:
         
         var = self.var_calc(Tp[:, mid:], nu2, t2)
         mean = self.mean_calc(Tp[:, :mid], var, nu1, t1)
-        print('condvar min:', torch.abs(var).min().item(), 'condvar mean:', torch.abs(var).mean().item())
-        assert (var >= 0).all(), 't2 %s\nT2%s' % ((Tp[:, mid:] > 0).sum().item(), (Tp[:, mid:] < 0).sum().item())
+        # print('condvar min:', torch.abs(var).min().item(), 'condvar mean:', torch.abs(var).mean().item())
+        # assert (var >= 0).all(), 't2 %s\nT2%s' % ((Tp[:, mid:] > 0).sum().item(), (Tp[:, mid:] < 0).sum().item())
         new_z = mean + torch.sqrt(var) * torch.randn_like(var)
         T = torch.cat((new_z, torch.square(new_z)), 1)
         return new_z, T
@@ -81,7 +81,7 @@ class GibbsSampler:
     
     
     def sample(self, G, nu1=None, nu2=None, mu=None, var=None, 
-               t1=None, t2=None, n_iterations=30, n_samples=10, batch_size=None):
+               t1=None, t2=None, n_iterations=15, n_samples=15, batch_size=None):
         nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
 
         z1, z2 = self.init_z(nu1, nu2, t1, t2, batch_size=batch_size)

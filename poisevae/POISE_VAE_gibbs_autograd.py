@@ -262,15 +262,15 @@ class POISEVAE(nn.Module):
         g22 = -torch.exp(self.g22_hat)
         g12 = 2 / sqrt(self.latent_dims_flatten[0]) * \
               torch.exp(self.g22_hat / 2 + self.t2_hat[1].unsqueeze(0) / 2) * \
-              torch.tanh(self.g12_hat)
+              torch.tanh(self.g12_hat) * 0.99
         g21 = 2 / sqrt(self.latent_dims_flatten[1]) * \
               torch.exp(self.g22_hat / 2 + self.t2_hat[0].unsqueeze(1) / 2) * \
-              torch.tanh(self.g21_hat)
+              torch.tanh(self.g21_hat) * 0.99
         G = torch.cat((torch.cat((self.g11, g12), 1), torch.cat((g21, g22), 1)), 0)
         return G
     
     def get_t(self):
-        t2 = [-0.5 * torch.exp(t2_hat) for t2_hat in self.t2_hat]
+        t2 = [-torch.exp(t2_hat) for t2_hat in self.t2_hat]
         return self.t1, t2
     
     def forward(self, x, n_gibbs_iter=15, kl_weight=1):
