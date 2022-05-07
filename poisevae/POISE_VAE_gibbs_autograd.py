@@ -116,7 +116,7 @@ class POISEVAE(nn.Module):
             raise TypeError('`encoders` and `decoders` must be lists of `nn.Module` class.')
 
         # Flag check
-        if enc_config not in ('nu', 'mu/var'):
+        if enc_config not in ('nu', 'mu/var', 'mu/nu2'):
             raise ValueError('`enc_config` value unreconized.')
         if KL_calc not in ('derivative', 'std_normal'): 
             raise ValueError('`KL_calc` value unreconized.')
@@ -173,7 +173,8 @@ class POISEVAE(nn.Module):
         self.g21_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         if fix_t:
             self.t1 = [torch.zeros(1, device=self.device), torch.zeros(1, device=self.device)]
-            self.t2_hat = [torch.zeros(1, device=self.device), torch.zeros(1, device=self.device)]
+            self.t2_hat = [torch.log(torch.tensor([0.5], device=self.device)), 
+                           torch.log(torch.tensor([0.5], device=self.device))]
         else:
             self.t1 = nn.ParameterList([nn.Parameter(torch.randn(ld, device=self.device)) 
                                         for ld in self.latent_dims_flatten])
@@ -252,9 +253,16 @@ class POISEVAE(nn.Module):
                                                            t1=self.t1, t2=t2, 
                                                            n_iterations=n_iterations)
             kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, var=param2)
-            if param1[0] is not None and param1[1] is not None:
-                assert torch.isnan(param1[0]).sum() == 0
-                assert torch.isnan(-0.5 / param2[0]).sum() == 0
+        elif self.enc_config == 'mu/nu2':
+            nu1 = [-2*param1[0]*param2[0], -2*param1[1]*param2[1]]
+            z_posteriors, T_posteriors = self.gibbs.sample(G, nu1=nu1, var=param2, 
+                                                           batch_size=batch_size,
+                                                           t1=self.t1, t2=t2, 
+                                                           n_iterations=n_iterations)
+            kl = self.kl_div.calc(G, z_posteriors, z_priors, nu1=nu1, nu2=param2)
+            # if param1[0] is not None and param1[1] is not None:
+            #     assert torch.isnan(param1[0]).sum() == 0
+            #     assert torch.isnan(-0.5 / param2[0]).sum() == 0
             
         return z_posteriors, kl
             
@@ -314,8 +322,8 @@ class POISEVAE(nn.Module):
         assert torch.isnan(z_posteriors[1]).sum() == 0
 
         x_rec = self.decode(z_posteriors) # Decoding
-        assert torch.isnan(x_rec[0][0]).sum() == 0
-        assert torch.isnan(x_rec[1][0]).sum() == 0
+        # assert torch.isnan(x_rec[0][0]).sum() == 0
+        # assert torch.isnan(x_rec[1][0]).sum() == 0
         
         # Reconstruction loss term *for decoder*
         dec_rec_loss = 0
@@ -358,19 +366,20 @@ class POISEVAE(nn.Module):
         return results
 
     
-    def generate(self, n_samples, n_gibbs_iter=15):
+    def generate(self, n_samples, n_gibbs_iter=15, return_dist=False):
         self._batch_size = n_samples
         G = self.get_G()
         _, t2 = self.get_t()
         
         nones = [None] * len(self.latent_dims)
         
-        z_priors, z_posteriors = self._sampling(G, nones, nones, t2, n_iterations=n_gibbs_iter)
-
-        x_rec = self.decode(z_posteriors) # Decoding
+        z_posteriors, kl = self._sampling(G.detach(), nones, nones, t2, n_iterations=n_gibbs_iter)
+        x_rec = self.decode(z_posteriors)
         
         for i in range(self.M):
             x_rec[i] = self.likelihoods[i](*x_rec[i])
+        if not return_dist:
+            x_rec = [i.loc[:, -1].detach().cpu() for i in x_rec]
             
         results = {'z': z_posteriors, 'x_rec': x_rec}
         

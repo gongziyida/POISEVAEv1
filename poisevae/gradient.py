@@ -28,19 +28,14 @@ class KLGradient(torch.autograd.Function):
             dG = TTp_p - TTp_q
             dnu = torch.bmm(nu.unsqueeze(1), cov).squeeze(1)
             dnup = torch.bmm(nup.unsqueeze(1), covp).squeeze(1)
-            print('dG11 KL', torch.abs(dG[:, :dG.shape[1]//2, :dG.shape[2]//2]).mean().item(), 
-                  'dG12 KL', torch.abs(dG[:, :dG.shape[1]//2, dG.shape[2]//2:]).mean().item())
-            print('dG21 KL', torch.abs(dG[:, dG.shape[1]//2:, :dG.shape[2]//2]).mean().item(), 
-                  'dG22 KL', torch.abs(dG[:, dG.shape[1]//2:, dG.shape[2]//2:]).mean().item())
-            print('dnu1 KL', torch.abs(dnu[..., :dnu.shape[-1]//2]).mean().item(), 
-                  'dnu2 KL', torch.abs(dnu[..., dnu.shape[-1]//2:]).mean().item())
-            print('dnu1p KL', torch.abs(dnup[..., :dnup.shape[-1]//2]).mean().item(), 
-                  'dnu2p KL', torch.abs(dnup[..., dnup.shape[-1]//2:]).mean().item())
-            # print('# dnu1 > 0', (dnu[..., :dnu.shape[-1]//2] > 0).sum(), (dnup[..., :dnu.shape[-1]//2] > 0).sum())
-            # print('# dnu1 < 0', (dnu[..., :dnu.shape[-1]//2] < 0).sum(), (dnup[..., :dnu.shape[-1]//2] < 0).sum())
-            # print('# dnu2 > 0', (dnu[..., dnu.shape[-1]//2:] > 0).sum(), (dnup[..., dnu.shape[-1]//2:] > 0).sum())
-            # print('# dnu2 < 0', (dnu[..., dnu.shape[-1]//2:] < 0).sum(), (dnup[..., dnu.shape[-1]//2:] < 0).sum())
-            # print((dnu > 0).sum(), (dnu < 0).sum(), ';', (dnup > 0).sum(), (dnup < 0).sum())
+            # print('dG11 KL', torch.abs(dG[:, :dG.shape[1]//2, :dG.shape[2]//2]).mean().item(), 
+            #       'dG12 KL', torch.abs(dG[:, :dG.shape[1]//2, dG.shape[2]//2:]).mean().item())
+            # print('dG21 KL', torch.abs(dG[:, dG.shape[1]//2:, :dG.shape[2]//2]).mean().item(), 
+            #       'dG22 KL', torch.abs(dG[:, dG.shape[1]//2:, dG.shape[2]//2:]).mean().item())
+            # print('dnu1 KL', torch.abs(dnu[..., :dnu.shape[-1]//2]).mean().item(), 
+            #       'dnu2 KL', torch.abs(dnu[..., dnu.shape[-1]//2:]).mean().item())
+            # print('dnu1p KL', torch.abs(dnup[..., :dnup.shape[-1]//2]).mean().item(), 
+            #       'dnu2p KL', torch.abs(dnup[..., dnup.shape[-1]//2:]).mean().item())
             # print('dnu', dnu.detach().sum().item(), nu.detach().sum().item(), cov.detach().sum().item())
             return None, None, None, None, w * dG, w * dnu, w * dnup
             # return None, None, None, None, None, None, None
@@ -72,14 +67,14 @@ class RecGradient(torch.autograd.Function):
                  (T_q.unsqueeze(-1) * Tp_q.unsqueeze(-2)).mean(1) * loglike.unsqueeze(-1).mean(1)
             dnu = (T_q * loglike).mean(1) - T_q.mean(1) * loglike.mean(1)
             dnup = (Tp_q * loglike).mean(1) - Tp_q.mean(1) * loglike.mean(1)
-            print('dG11 Rec', torch.abs(dG[:, :dG.shape[1]//2, :dG.shape[2]//2]).mean().item(), 
-                  'dG12 Rec', torch.abs(dG[:, :dG.shape[1]//2, dG.shape[2]//2:]).mean().item())
-            print('dG21 Rec', torch.abs(dG[:, dG.shape[1]//2:, :dG.shape[2]//2]).mean().item(), 
-                  'dG22 Rec', torch.abs(dG[:, dG.shape[1]//2:, dG.shape[2]//2:]).mean().item())
-            print('dnu1 Rec', torch.abs(dnu[..., :dnu.shape[-1]//2]).mean().item(), 
-                  'dnu2 Rec', torch.abs(dnu[..., dnu.shape[-1]//2:]).mean().item())
-            print('dnu1p Rec', torch.abs(dnup[..., :dnup.shape[-1]//2]).mean().item(), 
-                  'dnu2p Rec', torch.abs(dnup[..., dnup.shape[-1]//2:]).mean().item())
+            # print('dG11 Rec', torch.abs(dG[:, :dG.shape[1]//2, :dG.shape[2]//2]).mean().item(), 
+            #       'dG12 Rec', torch.abs(dG[:, :dG.shape[1]//2, dG.shape[2]//2:]).mean().item())
+            # print('dG21 Rec', torch.abs(dG[:, dG.shape[1]//2:, :dG.shape[2]//2]).mean().item(), 
+            #       'dG22 Rec', torch.abs(dG[:, dG.shape[1]//2:, dG.shape[2]//2:]).mean().item())
+            # print('dnu1 Rec', torch.abs(dnu[..., :dnu.shape[-1]//2]).mean().item(), 
+            #       'dnu2 Rec', torch.abs(dnu[..., dnu.shape[-1]//2:]).mean().item())
+            # print('dnu1p Rec', torch.abs(dnup[..., :dnup.shape[-1]//2]).mean().item(), 
+            #       'dnu2p Rec', torch.abs(dnup[..., dnup.shape[-1]//2:]).mean().item())
             # print((dnu[..., dnu.shape[-1]//2:] < 0).sum(), (dnup[..., dnu.shape[-1]//2:] < 0).sum())
             return None, None, w * dG, w * dnu, w * dnup, None
             # return None, None, None, None, None, None

@@ -165,7 +165,8 @@ class POISEVAE(nn.Module):
         self.g21_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         if fix_t:
             self.t1 = [torch.zeros(1, device=self.device), torch.zeros(1, device=self.device)]
-            self.t2_hat = [torch.zeros(1, device=self.device), torch.zeros(1, device=self.device)]
+            self.t2_hat = [torch.log(torch.tensor([0.5], device=self.device)), 
+                           torch.log(torch.tensor([0.5], device=self.device))]
         else:
             self.t1 = nn.ParameterList([nn.Parameter(torch.randn(ld, device=self.device)) 
                                         for ld in self.latent_dims_flatten])
@@ -293,12 +294,12 @@ class POISEVAE(nn.Module):
             param1, param2 = self.encode(self.mask_missing(x))
         else:
             param1, param2 = self.encode(x)
-        if param1[0] is not None and param1[1] is not None:
-            print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
-            print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
-            print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
-            print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
-            assert torch.isnan(param1[0]).sum() == 0
+        # if param1[0] is not None and param1[1] is not None:
+            # print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
+            # print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
+            # print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
+            # print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
+            # assert torch.isnan(param1[0]).sum() == 0
         
         G = self.get_G()
         _, t2 = self.get_t()
@@ -306,18 +307,18 @@ class POISEVAE(nn.Module):
         z_priors, z_posteriors, T_priors, T_posteriors, nus = self._sampling(G, param1, param2, t2, 
                                                                              n_iterations=n_gibbs_iter)
         
-        if param1[0] is not None and param1[1] is not None:
-            assert torch.isnan(nus[0]).sum() == 0
-            assert torch.isnan(nus[1]).sum() == 0
-        assert torch.isnan(G).sum() == 0
-        assert torch.isnan(z_priors[0]).sum() == 0
-        assert torch.isnan(z_priors[1]).sum() == 0
-        assert torch.isnan(z_posteriors[0]).sum() == 0
-        assert torch.isnan(z_posteriors[1]).sum() == 0
+        # if param1[0] is not None and param1[1] is not None:
+        #     assert torch.isnan(nus[0]).sum() == 0
+        #     assert torch.isnan(nus[1]).sum() == 0
+        # assert torch.isnan(G).sum() == 0
+        # assert torch.isnan(z_priors[0]).sum() == 0
+        # assert torch.isnan(z_priors[1]).sum() == 0
+        # assert torch.isnan(z_posteriors[0]).sum() == 0
+        # assert torch.isnan(z_posteriors[1]).sum() == 0
 
         x_rec = self.decode(z_posteriors) # Decoding
-        assert torch.isnan(x_rec[0][0]).sum() == 0
-        assert torch.isnan(x_rec[1][0]).sum() == 0
+        # assert torch.isnan(x_rec[0][0]).sum() == 0
+        # assert torch.isnan(x_rec[1][0]).sum() == 0
         
         # Reconstruction loss term *for decoder*
         dec_rec_loss = 0
@@ -354,11 +355,11 @@ class POISEVAE(nn.Module):
             'z': z_posteriors, 'x_rec': x_rec, 'param1': param1, 'param2': param2,
             'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': kl
         }
-        if param1[0] is not None and param1[1] is not None:
-            print('total loss:', total_loss.item(), 'kl term:', kl.item())
-            print('rec1 loss:', recs[0].item() / batch_size / n_gibbs_iter, 
-                  'rec2 loss:', recs[1].item() / batch_size / n_gibbs_iter)
-            print()
+        # if param1[0] is not None and param1[1] is not None:
+            # print('total loss:', total_loss.item(), 'kl term:', kl.item())
+            # print('rec1 loss:', recs[0].item() / batch_size / n_gibbs_iter, 
+            #       'rec2 loss:', recs[1].item() / batch_size / n_gibbs_iter)
+            # print()
         return results
 
     

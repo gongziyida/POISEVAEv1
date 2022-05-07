@@ -13,7 +13,7 @@ def init_posterior(nu1, nu2, mu, var, enc_config):
                     nu2[i] = -1 / (2 * var[i])
             return nu1, nu2, mu, var
 
-    elif enc_config == 'nu':
+    elif enc_config in ('nu', 'mu/nu2'):
         if nu1 is not None and nu2 is not None:
             mu, var = [None, None], [None, None]
             
@@ -93,10 +93,10 @@ class KLDDerivative:
                 nus.append(torch.zeros(T_posts[-1].shape[0], T_posts[-1].shape[2]).to(self.device))
             else:
                 nus.append(torch.cat((nu1[i], nu2[i]), -1))
-        print('zpost max:', torch.abs(z[0]).max().item(), 'zpost mean:', torch.abs(z[0]).mean().item())
-        print('zpostp max:', torch.abs(z[1]).max().item(), 'zpostp mean:', torch.abs(z[1]).mean().item())
-        print('zprior max:', torch.abs(z_priors[0]).max().item(), 'zprior mean:', torch.abs(z_priors[0]).mean().item())
-        print('zpriorp max:', torch.abs(z_priors[1]).max().item(), 'zpriorp mean:', torch.abs(z_priors[1]).mean().item())
+        # print('zpost max:', torch.abs(z[0]).max().item(), 'zpost mean:', torch.abs(z[0]).mean().item())
+        # print('zpostp max:', torch.abs(z[1]).max().item(), 'zpostp mean:', torch.abs(z[1]).mean().item())
+        # print('zprior max:', torch.abs(z_priors[0]).max().item(), 'zprior mean:', torch.abs(z_priors[0]).mean().item())
+        # print('zpriorp max:', torch.abs(z_priors[1]).max().item(), 'zpriorp mean:', torch.abs(z_priors[1]).mean().item())
         # TODO: make it generic for > 2 latent spaces
         batch_size = z[0].shape[0]
         if z[1].shape[0] != batch_size:
