@@ -13,7 +13,7 @@ def init_posterior(nu1, nu2, mu, var, enc_config):
                     nu2[i] = -1 / (2 * var[i])
             return nu1, nu2, mu, var
 
-    elif enc_config in ('nu', 'mu/nu2'):
+    elif enc_config == 'nu':
         if nu1 is not None and nu2 is not None:
             mu, var = [None, None], [None, None]
             
@@ -22,7 +22,16 @@ def init_posterior(nu1, nu2, mu, var, enc_config):
                     var[i] = -1 / (2 * nu2[i])
                     mu[i] = nu1[i] * var[i]
             return nu1, nu2, mu, var
-    
+        
+    elif enc_config == 'mu/nu2':
+        if mu is not None and nu2 is not None:
+            nu1, var = [None, None], [None, None]
+            
+            for i in (0, 1):
+                if mu[i] is not None and nu2[i] is not None:
+                    var[i] = -1 / (2 * nu2[i])
+                    nu1[i] = -2 * mu[i] * nu2[i]
+            return nu1, nu2, mu, var
     # Prior
     return [None, None], [None, None], [None, None], [None, None]
 

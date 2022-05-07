@@ -254,12 +254,11 @@ class POISEVAE(nn.Module):
                                                            n_iterations=n_iterations)
             kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, var=param2)
         elif self.enc_config == 'mu/nu2':
-            nu1 = [-2*param1[0]*param2[0], -2*param1[1]*param2[1]]
-            z_posteriors, T_posteriors = self.gibbs.sample(G, nu1=nu1, var=param2, 
+            z_posteriors, T_posteriors = self.gibbs.sample(G, mu=param1, nu2=param2, 
                                                            batch_size=batch_size,
                                                            t1=self.t1, t2=t2, 
                                                            n_iterations=n_iterations)
-            kl = self.kl_div.calc(G, z_posteriors, z_priors, nu1=nu1, nu2=param2)
+            kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, nu2=param2)
             # if param1[0] is not None and param1[1] is not None:
             #     assert torch.isnan(param1[0]).sum() == 0
             #     assert torch.isnan(-0.5 / param2[0]).sum() == 0
