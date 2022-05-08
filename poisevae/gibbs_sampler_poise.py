@@ -81,8 +81,8 @@ class GibbsSampler:
                 mu = var * t1_i
                 rand = torch.randn(batch_size, ld).to(self.device, self.dtype).detach()
             else:
-                if not (nu2_i < 0).all():
-                    raise ValueError('Invalid variance')
+                # if not (nu2_i < 0).all():
+                #     raise ValueError('Invalid variance')
                 var = -torch.reciprocal(2 * (t2_i + nu2_i))
                 mu = var * (nu1_i + t1_i)
                 rand = torch.randn_like(mu)

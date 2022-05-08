@@ -115,7 +115,7 @@ class POISEVAE(nn.Module):
             raise TypeError('`encoders` and `decoders` must be lists of `nn.Module` class.')
 
         # Flag check
-        if enc_config not in ('nu', 'mu/var'):
+        if enc_config not in ('nu', 'mu/var', 'mu/nu2'):
             raise ValueError('`enc_config` value unreconized.')
         if KL_calc not in ('derivative', 'std_normal'): 
             raise ValueError('`KL_calc` value unreconized.')
@@ -252,6 +252,13 @@ class POISEVAE(nn.Module):
             nup = torch.cat([param1[1] / param2[1], -0.5 / param2[1]], -1)
             assert torch.isnan(param1[0]).sum() == 0
             assert torch.isnan(-0.5 / param2[0]).sum() == 0
+        elif self.enc_config == 'mu/nu2':
+            z_posteriors, T_posteriors = self.gibbs.sample(G, mu=param1, nu2=param2, 
+                                                           batch_size=batch_size,
+                                                           t1=self.t1, t2=t2, 
+                                                           n_iterations=n_iterations)
+            nu = torch.cat([-2 * param1[0] * param2[0], param2[0]], -1)
+            nup = torch.cat([-2 * param1[1] * param2[1], param2[1]], -1)
             
         return z_priors, z_posteriors, T_priors, T_posteriors, [nu, nup]
             
@@ -294,12 +301,12 @@ class POISEVAE(nn.Module):
             param1, param2 = self.encode(self.mask_missing(x))
         else:
             param1, param2 = self.encode(x)
-        # if param1[0] is not None and param1[1] is not None:
-            # print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
-            # print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
-            # print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
-            # print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
-            # assert torch.isnan(param1[0]).sum() == 0
+        if param1[0] is not None and param1[1] is not None:
+            print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
+            print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
+            print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
+            print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
+            assert torch.isnan(param1[0]).sum() == 0
         
         G = self.get_G()
         _, t2 = self.get_t()
