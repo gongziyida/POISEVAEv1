@@ -1,5 +1,4 @@
 import torch
-torch.manual_seed(2)
 
 _device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -12,30 +11,33 @@ def init_posterior(nu1, nu2, mu, var, enc_config):
                 if mu[i] is not None and var[i] is not None:
                     nu1[i] = mu[i] / var[i]
                     nu2[i] = -1 / (2 * var[i])
-            return nu1, nu2, mu, var
+            return nu1, nu2
 
     elif enc_config == 'nu':
         if nu1 is not None and nu2 is not None:
-            mu, var = [None, None], [None, None]
-            
-            for i in (0, 1):
-                if nu1[i] is not None and nu2[i] is not None:
-                    var[i] = -1 / (2 * nu2[i])
-                    mu[i] = nu1[i] * var[i]
-            return nu1, nu2, mu, var
+            return nu1, nu2
         
     elif enc_config == 'mu/nu2':
         if mu is not None and nu2 is not None:
-            nu1, var = [None, None], [None, None]
+            nu1 = [None, None]
             
             for i in (0, 1):
                 if mu[i] is not None and nu2[i] is not None:
-                    var[i] = -1 / (2 * nu2[i])
                     nu1[i] = -2 * mu[i] * nu2[i]
-            return nu1, nu2, mu, var
-    
+            return nu1, nu2
     # Prior
-    return [None, None], [None, None], [None, None], [None, None]
+    return [None, None], [None, None]
+
+def new_nu(nu, nu_tilde):
+    nu_ = [None, None]
+    for i in (0, 1):
+        if (nu[i] is None) and (nu_tilde[1-i] is not None):
+            nu_[i] = nu_tilde[1-i]
+        elif (nu[i] is not None) and (nu_tilde[1-i] is None):
+            nu_[i] = nu[i]
+        elif (nu[i] is not None) and (nu_tilde[1-i] is not None):
+            nu_[i] = nu[i] + nu_tilde[1-i]
+    return nu_
 
 class GibbsSampler:
     __version__ = 1.0 # generator
@@ -91,8 +93,11 @@ class GibbsSampler:
     
     
     def sample(self, G, nu1=None, nu2=None, mu=None, var=None, 
+               nu1_=None, nu2_=None, mu_=None, var_=None, 
                t1=None, t2=None, n_iterations=15, n_samples=15, batch_size=None):
-        nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
+        nu1, nu2 = init_posterior(nu1, nu2, mu, var, self.enc_config)
+        nu1_, nu2_ = init_posterior(nu1_, nu2_, mu_, var_, self.enc_config)
+        nu1, nu2 = new_nu(nu1, nu1_), new_nu(nu2, nu2_)
 
         z1, z2 = self.init_z(nu1, nu2, t1, t2, batch_size=batch_size)
         assert len(z1.shape) == 2
@@ -118,7 +123,7 @@ class GibbsSampler:
     def sample_generator(self, G, nu1=None, nu2=None, mu=None, var=None, 
                          t1=None, t2=None, n_iterations=1, batch_size=None):
         with torch.no_grad():
-            nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
+            nu1, nu2 = init_posterior(nu1, nu2, mu, var, self.enc_config)
 
             z = self.init_z(mu=mu, var=var, batch_size=batch_size)
 

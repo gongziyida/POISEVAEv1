@@ -1,5 +1,4 @@
 import torch
-torch.manual_seed(2)
 import torch.nn as nn
 from .gibbs_sampler_poise import GibbsSampler
 from .gradient import KLGradient, RecGradient

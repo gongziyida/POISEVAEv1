@@ -11,31 +11,34 @@ def init_posterior(nu1, nu2, mu, var, enc_config):
                 if mu[i] is not None and var[i] is not None:
                     nu1[i] = mu[i] / var[i]
                     nu2[i] = -1 / (2 * var[i])
-            return nu1, nu2, mu, var
+            return nu1, nu2
 
     elif enc_config == 'nu':
         if nu1 is not None and nu2 is not None:
-            mu, var = [None, None], [None, None]
-            
-            for i in (0, 1):
-                if nu1[i] is not None and nu2[i] is not None:
-                    var[i] = -1 / (2 * nu2[i])
-                    mu[i] = nu1[i] * var[i]
-            return nu1, nu2, mu, var
+            return nu1, nu2
         
     elif enc_config == 'mu/nu2':
         if mu is not None and nu2 is not None:
-            nu1, var = [None, None], [None, None]
+            nu1 = [None, None]
             
             for i in (0, 1):
                 if mu[i] is not None and nu2[i] is not None:
-                    var[i] = -1 / (2 * nu2[i])
                     nu1[i] = -2 * mu[i] * nu2[i]
-            return nu1, nu2, mu, var
+            return nu1, nu2
     # Prior
-    return [None, None], [None, None], [None, None], [None, None]
+    return [None, None], [None, None]
 
-    
+def new_nu(nu, nu_tilde):
+    nu_ = [None, None]
+    for i in (0, 1):
+        if (nu[i] is None) and (nu_tilde[1-i] is not None):
+            nu_[i] = nu_tilde[1-i]
+        elif (nu[i] is not None) and (nu_tilde[1-i] is None):
+            nu_[i] = nu[i]
+        elif (nu[i] is not None) and (nu_tilde[1-i] is not None):
+            nu_[i] = nu[i] + nu_tilde[1-i]
+    return nu_
+
 class KLDN01:
     __version__ = 3.1 # lambda -> nu
     
@@ -66,8 +69,11 @@ class KLDN01:
         mean = self.mean_calc(Tp[:, :mid], var, nu1, t1)
         return torch.square(mean) + var - torch.log(var) - 1
         
-    def calc(self, G, z, z_priors, nu1=None, nu2=None, mu=None, var=None):
-        nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
+    def calc(self, G, z, z_priors, nu1=None, nu2=None, mu=None, var=None, 
+             nu1_=None, nu2_=None, mu_=None, var_=None):
+        nu1, nu2 = init_posterior(nu1, nu2, mu, var, self.enc_config)
+        nu1_, nu2_ = init_posterior(nu1_, nu2_, mu_, var_, self.enc_config)
+        nu1, nu2 = new_nu(nu1, nu1_), new_nu(nu2, nu2_)
         part0 = self.value_calc(z[1], G.t(), nu1[0], nu2[0], 0, -1).sum(dim=1)
         part1 = self.value_calc(z[0], G, nu1[1], nu2[1], 0, -1).sum(dim=1)
         res = (part0 + part1) * 0.5
@@ -88,8 +94,11 @@ class KLDDerivative:
         self.reduction = reduction
         self.device = device
         
-    def calc(self, G, z, z_priors, nu1=None, nu2=None, mu=None, var=None):
-        nu1, nu2, mu, var = init_posterior(nu1, nu2, mu, var, self.enc_config)
+    def calc(self, G, z, z_priors, nu1=None, nu2=None, mu=None, var=None,
+             nu1_=None, nu2_=None, mu_=None, var_=None):
+        nu1, nu2 = init_posterior(nu1, nu2, mu, var, self.enc_config)
+        nu1_, nu2_ = init_posterior(nu1_, nu2_, mu_, var_, self.enc_config)
+        nu1, nu2 = new_nu(nu1, nu1_), new_nu(nu2, nu2_)
         ## Creating Sufficient statistics
         T_priors, T_posts, nus = [], [], []
         for i in range(len(z)):

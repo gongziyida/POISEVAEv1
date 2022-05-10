@@ -1,5 +1,4 @@
 import torch
-torch.manual_seed(2)
 import torch.nn as nn
 from .gibbs_sampler_poise import GibbsSampler
 from .kl_divergence_calculator import KLDDerivative, KLDN01
@@ -196,18 +195,27 @@ class POISEVAE(nn.Module):
         z: list of torch.Tensor
         """
         param1, param2 = [], []
+        param1_, param2_ = [], []
         
         for i, xi in enumerate(x):
             if xi is None:
                 param1.append(self.missing_data)
                 param2.append(self.missing_data)
+                param1_.append(self.missing_data)
+                param2_.append(self.missing_data)
             else:
                 batch_size = xi.shape[0] if self.batched else 1
-                _param1, _log_param2 = self.encoders[i](xi)
-                param1.append(_param1.view(batch_size, -1))
+                ret = self.encoders[i](xi)
+                param1.append(ret[0].view(batch_size, -1))
                 sign = 1 if self.enc_config == 'mu/var' else -1
-                param2.append(sign * torch.exp(_log_param2.view(batch_size, -1)))
-        return param1, param2
+                param2.append(sign * torch.exp(ret[1].view(batch_size, -1)))
+                if len(ret) == 2:
+                    param1_.append(None)
+                    param2_.append(None)
+                elif len(ret) == 4:
+                    param1_.append(ret[2].view(batch_size, -1))
+                    param2_.append(sign * torch.exp(ret[3].view(batch_size, -1)))
+        return param1, param2, param1_, param2_
     
     def decode(self, z):
         """
@@ -233,7 +241,7 @@ class POISEVAE(nn.Module):
             x_rec.append(x_)
         return x_rec
         
-    def _sampling(self, G, param1, param2, t2, n_iterations=30):
+    def _sampling(self, G, param1, param2, param1_, param2_, t2, n_iterations=30):
         batch_size = self._fetch_batch_size(param1)
         self._batch_size = batch_size
         
@@ -242,23 +250,29 @@ class POISEVAE(nn.Module):
         
         if self.enc_config == 'nu':
             z_posteriors, T_posteriors = self.gibbs.sample(G, nu1=param1, nu2=param2, 
+                                                           nu1_=param1_, nu2_=param2_, 
                                                            batch_size=batch_size,
                                                            t1=self.t1, t2=t2, 
                                                            n_iterations=n_iterations)
-            kl = self.kl_div.calc(G, z_posteriors, z_priors, nu1=param1, nu2=param2)
+            kl = self.kl_div.calc(G, z_posteriors, z_priors, 
+                                  nu1=param1, nu2=param2, nu1_=param1_, nu2_=param2_)
             
         elif self.enc_config == 'mu/var':
             z_posteriors, T_posteriors = self.gibbs.sample(G, mu=param1, var=param2, 
+                                                           mu_=param1_, var_=param2_, 
                                                            batch_size=batch_size,
                                                            t1=self.t1, t2=t2, 
                                                            n_iterations=n_iterations)
-            kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, var=param2)
+            kl = self.kl_div.calc(G, z_posteriors, z_priors, 
+                                  mu=param1, var=param2, mu_=param1_, var_=param2_)
         elif self.enc_config == 'mu/nu2':
             z_posteriors, T_posteriors = self.gibbs.sample(G, mu=param1, nu2=param2, 
+                                                           mu_=param1_, nu2_=param2_, 
                                                            batch_size=batch_size,
                                                            t1=self.t1, t2=t2, 
                                                            n_iterations=n_iterations)
-            kl = self.kl_div.calc(G, z_posteriors, z_priors, mu=param1, nu2=param2)
+            kl = self.kl_div.calc(G, z_posteriors, z_priors, 
+                                  mu=param1, nu2=param2, mu_=param1_, nu2_=param2_)
             # if param1[0] is not None and param1[1] is not None:
             #     assert torch.isnan(param1[0]).sum() == 0
             #     assert torch.isnan(-0.5 / param2[0]).sum() == 0
@@ -301,9 +315,9 @@ class POISEVAE(nn.Module):
         batch_size = self._fetch_batch_size(x)
         
         if self.mask_missing is not None:
-            param1, param2 = self.encode(self.mask_missing(x))
+            param1, param2, param1_, param2_ = self.encode(self.mask_missing(x))
         else:
-            param1, param2 = self.encode(x)
+            param1, param2, param1_, param2_ = self.encode(x)
         if param1[0] is not None and param1[1] is not None:
             print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
             print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
@@ -314,7 +328,8 @@ class POISEVAE(nn.Module):
         G = self.get_G()
         _, t2 = self.get_t()
     
-        z_posteriors, kl = self._sampling(G.detach(), param1, param2, t2, n_iterations=n_gibbs_iter)
+        z_posteriors, kl = self._sampling(G.detach(), param1, param2, param1_, param2_, t2, 
+                                          n_iterations=n_gibbs_iter)
         
         assert torch.isnan(G).sum() == 0
         assert torch.isnan(z_posteriors[0]).sum() == 0
@@ -353,6 +368,8 @@ class POISEVAE(nn.Module):
         x_rec = [i.loc[:, -1].detach().cpu() for i in x_rec]
         param1 = [i.detach().cpu() if i is not None else None for i in param1]
         param2 = [i.detach().cpu() if i is not None else None for i in param2]
+        param1_ = [i.detach().cpu() if i is not None else None for i in param1_]
+        param2_ = [i.detach().cpu() if i is not None else None for i in param2_]
         results = {
             'z': z_posteriors, 'x_rec': x_rec, 'param1': param1, 'param2': param2,
             'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': kl
