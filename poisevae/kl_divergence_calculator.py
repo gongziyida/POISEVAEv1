@@ -145,7 +145,7 @@ class KLDDerivative:
         elif self.reduction == 'sum':
             return part0.sum() - part1.sum() + part2.sum()
         else:
-            return part0 + part1 + part2
+            raise NotImplementedError
     
     def dot_product(self, tensor_1, tensor_2):
         out = torch.sum(torch.mul(tensor_1, tensor_2))

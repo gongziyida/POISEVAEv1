@@ -119,7 +119,7 @@ class POISEVAE(nn.Module):
             raise ValueError('`enc_config` value unreconized.')
         if KL_calc not in ('derivative', 'std_normal'): 
             raise ValueError('`KL_calc` value unreconized.')
-        if reduction != 'mean':
+        if reduction not in ('mean', 'sum'):
             raise NotImplementedError
             
         # Get the latent dimensions
@@ -361,7 +361,8 @@ class POISEVAE(nn.Module):
         if x[0] is None and x[1] is None: # No rec loss
             total_loss = kl_weight * kl
         else:
-            total_loss = kl_weight * kl + dec_rec_loss.mean() 
+            dec_rec_loss = dec_rec_loss.mean() if self.reduction == 'mean' else dec_rec_loss.sum()
+            total_loss = kl_weight * kl + dec_rec_loss
 
         # These will then be used for logging only. Don't waste CUDA memory!
         # z_posteriors = [i[:, -1].detach().cpu() for i in z_posteriors]
