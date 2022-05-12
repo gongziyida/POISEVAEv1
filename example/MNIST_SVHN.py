@@ -1,4 +1,5 @@
 import os
+from itertools import product
 import random
 import torch
 import torch.nn as nn
@@ -17,6 +18,9 @@ MNIST_PATH = os.path.join(HOME_PATH, 'Datasets/MNIST/%s.pt')
 SVHN_PATH = os.path.join(HOME_PATH, 'Datasets/SVHN/%s_32x32.mat')
 
 def run(lat1, lat2, kl_weight, n_gibbs_iter, missing_prob):
+    if (lat1 == 10 and lat2 == 10 and kl_weight == 3 and n_gibbs_iter == 15 and missing_prob == 0.1) or \
+       (lat1 == 20 and lat2 == 20 and kl_weight == 9 and n_gibbs_iter == 30 and missing_prob == 0.2): 
+           return 
     enc_mnist = EncMNIST(lat1).to(device)
     dec_mnist = DecMNIST(lat1).to(device)
     enc_svhn = EncSVHN(lat2).to(device)
@@ -81,5 +85,5 @@ if __name__ == '__main__':
     n_gibbs_iters = (15, 30)
     missing_probs = (0.1, 0.2)
         
-    for l, kl_w, n_g, p in zip(lats, kl_weights, n_gibbs_iters, missing_probs):
+    for l, kl_w, n_g, p in product(lats, kl_weights, n_gibbs_iters, missing_probs):
         run(lat1=l, lat2=l, kl_weight=kl_w, n_gibbs_iter=n_g, missing_prob=p)
