@@ -318,12 +318,12 @@ class POISEVAE(nn.Module):
             param1, param2, param1_, param2_ = self.encode(self.mask_missing(x))
         else:
             param1, param2, param1_, param2_ = self.encode(x)
-        if param1[0] is not None and param1[1] is not None:
-            print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
-            print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
-            print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
-            print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
-            assert torch.isnan(param1[0]).sum() == 0
+        # if param1[0] is not None and param1[1] is not None:
+        #     print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
+        #     print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
+        #     print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
+        #     print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
+        #     assert torch.isnan(param1[0]).sum() == 0
         
         G = self.get_G()
         _, t2 = self.get_t()
@@ -375,11 +375,11 @@ class POISEVAE(nn.Module):
             'z': z_posteriors, 'x_rec': x_rec, 'param1': param1, 'param2': param2,
             'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': kl
         }
-        if param1[0] is not None and param1[1] is not None:
-            print('total loss:', total_loss.item(), 'kl term:', kl.item())
-            print('rec1 loss:', recs[0].item() / batch_size / n_gibbs_iter, 
-                  'rec2 loss:', recs[1].item() / batch_size / n_gibbs_iter)
-            print()
+        # if param1[0] is not None and param1[1] is not None:
+        #     print('total loss:', total_loss.item(), 'kl term:', kl.item())
+        #     print('rec1 loss:', recs[0].item() / batch_size / n_gibbs_iter, 
+        #           'rec2 loss:', recs[1].item() / batch_size / n_gibbs_iter)
+        #     print()
         return results
 
     

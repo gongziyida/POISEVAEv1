@@ -19,7 +19,7 @@ def _log(results, mode, writer, epoch):
 
     
     
-def train(model, joint_dataloader, optimizer, epoch, kl_weight, writer=None,
+def train(model, joint_dataloader, optimizer, epoch, kl_weight, n_gibbs_iter, writer=None,
           mask_missing=None, device=_device, dtype=torch.float32):
     '''
     Parameters
@@ -51,9 +51,11 @@ def train(model, joint_dataloader, optimizer, epoch, kl_weight, writer=None,
         optimizer.zero_grad()
         if mask_missing is not None:
             results = model(mask_missing(
-                [data[i].to(device=device, dtype=dtype) for i in range(model.M)]), kl_weight=kl_weight)
+                            [data[i].to(device=device, dtype=dtype) for i in range(model.M)]), 
+                            kl_weight=kl_weight, n_gibbs_iter=n_gibbs_iter)
         else:
-            results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)], kl_weight=kl_weight)
+            results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)], 
+                            kl_weight=kl_weight, n_gibbs_iter=n_gibbs_iter)
             
         results['total_loss'].backward() 
         torch.nn.utils.clip_grad_norm_(model.parameters(), 50)
@@ -66,7 +68,7 @@ def train(model, joint_dataloader, optimizer, epoch, kl_weight, writer=None,
     return inputs, res
 
 
-def test(model, joint_dataloader, epoch, writer=None, 
+def test(model, joint_dataloader, epoch, kl_weight, n_gibbs_iter, writer=None, 
          mask_missing=None, device=_device, dtype=torch.float32):
     '''
     Parameters
@@ -98,9 +100,11 @@ def test(model, joint_dataloader, epoch, writer=None,
         for k, data in enumerate(joint_dataloader):
             if mask_missing is not None:
                 results = model(mask_missing(
-                    [data[i].to(device=device, dtype=dtype) for i in range(model.M)]))
+                                [data[i].to(device=device, dtype=dtype) for i in range(model.M)]), 
+                                kl_weight=kl_weight, n_gibbs_iter=n_gibbs_iter)
             else:
-                results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)])
+                results = model([data[i].to(device=device, dtype=dtype) for i in range(model.M)], 
+                                kl_weight=kl_weight, n_gibbs_iter=n_gibbs_iter)
 
             _log(results, 'test', writer, epoch * len(joint_dataloader) + k)
             
