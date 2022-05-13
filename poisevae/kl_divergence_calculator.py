@@ -100,54 +100,64 @@ class KLDDerivative:
         nu1_, nu2_ = init_posterior(nu1_, nu2_, mu_, var_, self.enc_config)
         nu1, nu2 = new_nu(nu1, nu1_), new_nu(nu2, nu2_)
         ## Creating Sufficient statistics
-        T_priors, T_posts, nus = [], [], []
-        for i in range(len(z)):
-            T_priors.append(torch.cat((z_priors[i], torch.square(z_priors[i])), -1))
-            T_posts.append(torch.cat((z[i], torch.square(z[i])), -1))
-            if nu1[i] is None: 
-                if nu2[i] is not None:
-                    raise RuntimeError('Unmatched nus')
-                
-                nus.append(torch.zeros(T_posts[-1].shape[0], T_posts[-1].shape[2]).to(self.device))
-            else:
-                nus.append(torch.cat((nu1[i], nu2[i]), -1))
+        T_prior = torch.cat((z_priors[0], torch.square(z_priors[0])), -1)
+        Tp_prior = torch.cat((z_priors[1], torch.square(z_priors[1])), -1)
+        T_post = torch.cat((z[0], torch.square(z[0])), -1)
+        Tp_post = torch.cat((z[1], torch.square(z[1])), -1)
+
+        nu = torch.cat((nu1[0], nu2[0]), -1) if nu1[0] is not None else \
+             torch.zeros(T_post.shape[0], T_post.shape[2]).to(self.device)
+        nup = torch.cat((nu1[1], nu2[1]), -1) if nu1[1] is not None else \
+              torch.zeros(Tp_post.shape[0], Tp_post.shape[2]).to(self.device)
         # print('zpost max:', torch.abs(z[0]).max().item(), 'zpost mean:', torch.abs(z[0]).mean().item())
         # print('zpostp max:', torch.abs(z[1]).max().item(), 'zpostp mean:', torch.abs(z[1]).mean().item())
         # print('zprior max:', torch.abs(z_priors[0]).max().item(), 'zprior mean:', torch.abs(z_priors[0]).mean().item())
         # print('zpriorp max:', torch.abs(z_priors[1]).max().item(), 'zpriorp mean:', torch.abs(z_priors[1]).mean().item())
-        # TODO: make it generic for > 2 latent spaces
-        batch_size = z[0].shape[0]
-        if z[1].shape[0] != batch_size:
-            raise ValueError('Batch size must match.')
         
-        T1_prior_unsq = T_priors[0].unsqueeze(-1)
-        T2_prior_unsq = T_priors[1].unsqueeze(-2)
-        T1_post_unsq  = T_posts[0].unsqueeze(-1) 
-        T2_post_unsq  = T_posts[1].unsqueeze(-2)
+        with torch.no_grad():
+            T_post_diff = T_post - T_post.mean(1, keepdim=True)
+            Tp_post_diff = Tp_post - Tp_post.mean(1, keepdim=True)
+            n = T_post.shape[1]
+            assert Tp_post.shape[1] == n
+            n = n - 1 if n > 1 else 1
+            cov = torch.bmm(T_post_diff.transpose(1, 2), T_post_diff) / n
+            covp = torch.bmm(Tp_post_diff.transpose(1, 2), Tp_post_diff) / n
+            dnu = torch.bmm(nu.unsqueeze(1), cov).squeeze(1)
+            dnup = torch.bmm(nup.unsqueeze(1), covp).squeeze(1)
+            
+            T_prior_outer = (T_prior.unsqueeze(-1) * Tp_prior.unsqueeze(-2))
+            T_post_outer = (T_post.unsqueeze(-1) * Tp_post.unsqueeze(-2))
+            # ET_prior_outer, ET_post_outer = T_prior_outer.mean(1), T_post_outer.mean(1)
+            nuT = (nu.unsqueeze(1) * T_post).sum(-1, keepdim=True).unsqueeze(-1)
+            nupTp = (nup.unsqueeze(1) * Tp_post).sum(-1, keepdim=True).unsqueeze(-1) # (batch, n_gibbs, 1,1)
+            dG = (T_post_outer * (nuT + nupTp)).mean(1) \
+               - T_post_outer.mean(1) * (nuT + nupTp).mean(1) \
+               + T_prior_outer.mean(1) - T_post_outer.mean(1)
+            
+        part0 = (dnu * nu).sum(dim=-1)
+        part1 = (dnup * nup).sum(dim=-1)
+        part2 = (dG * G).sum(dim=(-1, -2))
         
-        T_prior_outer = (T1_prior_unsq * T2_prior_unsq).mean(1)
-        T_post_outer = (T1_post_unsq * T2_post_unsq).mean(1)
+        # part2 = (T_prior_outer.detach() * G).sum(dim=(-1, -2)) - \
+        #         (T_post_outer.detach() * G).sum(dim=(-1, -2))
         
-        T_post_mean = [T_posts[0].mean(1), T_posts[1].mean(1)]
+        # T_post_mean, Tp_post_mean = T_post.mean(1), Tp_post.mean(1)
         
-        part0 = (nus[0] * T_post_mean[0]).sum(dim=-1) + \
-                (nus[1] * T_post_mean[1]).sum(dim=-1)
+#         part0 = (nu * T_post_mean).sum(dim=-1) + \
+#                 (nup * Tp_post_mean).sum(dim=-1)
         
-        part1 = (nus[0] * T_post_mean[0].detach()).sum(dim=-1) + \
-                (nus[1] * T_post_mean[1].detach()).sum(dim=-1)
+#         part1 = (nu * T_post_mean.detach()).sum(dim=-1) + \
+#                 (nup * Tp_post_mean.detach()).sum(dim=-1)
         
-        part2 = (T_prior_outer.detach() * G).sum(dim=(-1, -2)) - \
-                (T_post_outer.detach() * G).sum(dim=(-1, -2))
+#         part2 = ((T_prior_outer - T_post_outer) * G.unsqueeze(0)).sum(dim=(-1, -2))
         
+        print('p0 mean', torch.abs(part0.detach()).mean().item(), 'p1 mean', torch.abs(part1.detach()).mean().item())
+        print('p2 mean', torch.abs(part2.detach()).mean().item(), 'dg mean', torch.abs((T_prior_outer - T_post_outer).detach()).mean().item())
+        print('tpo mean', torch.abs(T_prior_outer.detach()).mean().item(), 'tqo mean', torch.abs(T_post_outer.detach()).mean().item())
         assert len(part0.shape) == 1 and len(part1.shape) == 1 and len(part2.shape) == 1
         if self.reduction == 'mean':
-            return part0.mean() - part1.mean() + part2.mean()
+            return part0.mean() + part1.mean() + part2.mean()
         elif self.reduction == 'sum':
-            return part0.sum() - part1.sum() + part2.sum()
+            return part0.sum() + part1.sum() + part2.sum()
         else:
             raise NotImplementedError
-    
-    def dot_product(self, tensor_1, tensor_2):
-        out = torch.sum(torch.mul(tensor_1, tensor_2))
-        return out
-    

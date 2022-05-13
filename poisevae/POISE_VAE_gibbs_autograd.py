@@ -208,13 +208,15 @@ class POISEVAE(nn.Module):
                 ret = self.encoders[i](xi)
                 param1.append(ret[0].view(batch_size, -1))
                 sign = 1 if self.enc_config == 'mu/var' else -1
-                param2.append(sign * torch.exp(ret[1].view(batch_size, -1)))
+                # param2.append(sign * torch.exp(ret[1].view(batch_size, -1)))
+                param2.append(sign * nn.functional.softplus(ret[1].view(batch_size, -1)))
                 if len(ret) == 2:
                     param1_.append(None)
                     param2_.append(None)
                 elif len(ret) == 4:
                     param1_.append(ret[2].view(batch_size, -1))
-                    param2_.append(sign * torch.exp(ret[3].view(batch_size, -1)))
+                    # param2_.append(sign * torch.exp(ret[3].view(batch_size, -1)))
+                    param2_.append(sign * nn.functional.softplus(ret[3].view(batch_size, -1)))
         return param1, param2, param1_, param2_
     
     def decode(self, z):
@@ -294,7 +296,7 @@ class POISEVAE(nn.Module):
         t2 = [-torch.exp(t2_hat) for t2_hat in self.t2_hat]
         return self.t1, t2
     
-    def forward(self, x, n_gibbs_iter=15, kl_weight=1):
+    def forward(self, x, n_gibbs_iter=15, kl_weight=1, detach_G=False):
         """
         Return
         ------
@@ -318,17 +320,17 @@ class POISEVAE(nn.Module):
             param1, param2, param1_, param2_ = self.encode(self.mask_missing(x))
         else:
             param1, param2, param1_, param2_ = self.encode(x)
-        # if param1[0] is not None and param1[1] is not None:
-        #     print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
-        #     print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
-        #     print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
-        #     print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
-        #     assert torch.isnan(param1[0]).sum() == 0
+        if param1[0] is not None and param1[1] is not None:
+            print('nu1 max:', torch.abs(param1[0]).max().item(), 'nu1 mean:', torch.abs(param1[0]).mean().item())
+            print('nu1p max:', torch.abs(param1[1]).max().item(), 'nu1p mean:', torch.abs(param1[1]).mean().item())
+            print('nu2 min:', torch.abs(param2[0]).min().item(), 'nu2 mean:', torch.abs(param2[0]).mean().item())
+            print('nu2p min:', torch.abs(param2[1]).min().item(), 'nu2p mean:', torch.abs(param2[1]).mean().item())
+            assert torch.isnan(param1[0]).sum() == 0
         
-        G = self.get_G()
+        G = self.get_G().detach() if detach_G else self.get_G()
         _, t2 = self.get_t()
     
-        z_posteriors, kl = self._sampling(G.detach(), param1, param2, param1_, param2_, t2, 
+        z_posteriors, kl = self._sampling(G, param1, param2, param1_, param2_, t2, 
                                           n_iterations=n_gibbs_iter)
         
         assert torch.isnan(G).sum() == 0
@@ -375,11 +377,11 @@ class POISEVAE(nn.Module):
             'z': z_posteriors, 'x_rec': x_rec, 'param1': param1, 'param2': param2,
             'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': kl
         }
-        # if param1[0] is not None and param1[1] is not None:
-        #     print('total loss:', total_loss.item(), 'kl term:', kl.item())
-        #     print('rec1 loss:', recs[0].item() / batch_size / n_gibbs_iter, 
-        #           'rec2 loss:', recs[1].item() / batch_size / n_gibbs_iter)
-        #     print()
+        if param1[0] is not None and param1[1] is not None:
+            print('total loss:', total_loss.item(), 'kl term:', kl.item())
+            print('rec1 loss:', recs[0].item() / batch_size / n_gibbs_iter, 
+                  'rec2 loss:', recs[1].item() / batch_size / n_gibbs_iter)
+            print()
         return results
 
     
@@ -390,7 +392,7 @@ class POISEVAE(nn.Module):
         
         nones = [None] * len(self.latent_dims)
         
-        z_posteriors, kl = self._sampling(G.detach(), nones, nones, t2, n_iterations=n_gibbs_iter)
+        z_posteriors, kl = self._sampling(G, nones, nones, t2, n_iterations=n_gibbs_iter)
         x_rec = self.decode(z_posteriors)
         
         for i in range(self.M):
