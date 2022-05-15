@@ -58,7 +58,7 @@ def train(model, joint_dataloader, optimizer, epoch, kl_weight, n_gibbs_iter, wr
                             kl_weight=kl_weight, n_gibbs_iter=n_gibbs_iter, detach_G=detach_G)
             
         results['total_loss'].backward() 
-        # torch.nn.utils.clip_grad_norm_(model.parameters(), 100)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 50)
         optimizer.step()
         _log(results, 'train', writer, epoch * len(joint_dataloader) + k)
         

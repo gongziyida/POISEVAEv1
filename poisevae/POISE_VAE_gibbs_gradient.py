@@ -238,8 +238,10 @@ class POISEVAE(nn.Module):
                                                                batch_size=batch_size,
                                                                t1=self.t1, t2=t2, 
                                                                n_iterations=n_iterations)
-            nu = torch.cat([param1[0], param2[0]], -1)
-            nup = torch.cat([param1[1], param2[1]], -1)
+            nu = torch.cat([param1[0], param2[0]], -1) if param1[0] is not None else \
+                 torch.zeros(T_posteriors[0].shape[0], T_posteriors[0].shape[2]).to(self.device)
+            nup = torch.cat([param1[1], param2[1]], -1) if param1[1] is not None else \
+                  torch.zeros(T_posteriors[1].shape[0], T_posteriors[1].shape[2]).to(self.device)
             
         elif self.enc_config == 'mu/var':
             with torch.no_grad():
@@ -247,8 +249,10 @@ class POISEVAE(nn.Module):
                                                                batch_size=batch_size,
                                                                t1=self.t1, t2=t2, 
                                                                n_iterations=n_iterations)
-            nu = torch.cat([param1[0] / param2[0], -0.5 / param2[0]], -1)
-            nup = torch.cat([param1[1] / param2[1], -0.5 / param2[1]], -1)
+            nu = torch.cat([param1[0] / param2[0], -0.5 / param2[0]], -1) if param1[0] is not None else \
+                 torch.zeros(T_posteriors[0].shape[0], T_posteriors[0].shape[2]).to(self.device)
+            nup = torch.cat([param1[1] / param2[1], -0.5 / param2[1]], -1) if param1[1] is not None else \
+                  torch.zeros(T_posteriors[1].shape[0], T_posteriors[1].shape[2]).to(self.device)
             assert torch.isnan(param1[0]).sum() == 0
             assert torch.isnan(-0.5 / param2[0]).sum() == 0
         elif self.enc_config == 'mu/nu2':
@@ -256,8 +260,10 @@ class POISEVAE(nn.Module):
                                                            batch_size=batch_size,
                                                            t1=self.t1, t2=t2, 
                                                            n_iterations=n_iterations)
-            nu = torch.cat([-2 * param1[0] * param2[0], param2[0]], -1)
-            nup = torch.cat([-2 * param1[1] * param2[1], param2[1]], -1)
+            nu = torch.cat([-2 * param1[0] * param2[0], param2[0]], -1) if param1[0] is not None else \
+                 torch.zeros(T_posteriors[0].shape[0], T_posteriors[0].shape[2]).to(self.device)
+            nup = torch.cat([-2 * param1[1] * param2[1], param2[1]], -1) if param1[1] is not None else \
+                  torch.zeros(T_posteriors[1].shape[1], T_posteriors[1].shape[2]).to(self.device)
             
         return z_priors, z_posteriors, T_priors, T_posteriors, [nu, nup]
             
@@ -276,7 +282,7 @@ class POISEVAE(nn.Module):
         t2 = [-torch.exp(t2_hat) for t2_hat in self.t2_hat]
         return self.t1, t2
     
-    def forward(self, x, n_gibbs_iter=15, kl_weight=1):
+    def forward(self, x, n_gibbs_iter=15, kl_weight=1, detach_G=False):
         """
         Return
         ------
@@ -307,7 +313,7 @@ class POISEVAE(nn.Module):
             print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
             assert torch.isnan(param1[0]).sum() == 0
         
-        G = self.get_G()
+        G = self.get_G().detach() if detach_G else self.get_G()
         _, t2 = self.get_t()
     
         z_priors, z_posteriors, T_priors, T_posteriors, nus = self._sampling(G, param1, param2, t2, 
@@ -345,11 +351,12 @@ class POISEVAE(nn.Module):
                     recs.append(negative_loglike.detach().sum()) # For loggging 
         
         kl = KLGradient.apply(*T_priors, *T_posteriors, G, *nus)
-        enc_rec_loss = RecGradient.apply(*T_posteriors, G, *nus, dec_rec_loss.detach())
+        
         # Total loss
         if x[0] is None and x[1] is None: # No rec loss
             total_loss = kl_weight * kl
         else:
+            enc_rec_loss = RecGradient.apply(*T_posteriors, G, *nus, dec_rec_loss.detach())
             total_loss = kl_weight * kl + dec_rec_loss.mean() + enc_rec_loss
 
         # These will then be used for logging only. Don't waste CUDA memory!
@@ -361,11 +368,11 @@ class POISEVAE(nn.Module):
             'z': z_posteriors, 'x_rec': x_rec, 'param1': param1, 'param2': param2,
             'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': kl
         }
-        # if param1[0] is not None and param1[1] is not None:
-            # print('total loss:', total_loss.item(), 'kl term:', kl.item())
-            # print('rec1 loss:', recs[0].item() / batch_size / n_gibbs_iter, 
-            #       'rec2 loss:', recs[1].item() / batch_size / n_gibbs_iter)
-            # print()
+        if param1[0] is not None and param1[1] is not None:
+            print('total loss:', total_loss.item(), 'kl term:', kl.item())
+            print('rec1 loss:', recs[0].item() / batch_size / n_gibbs_iter, 
+                  'rec2 loss:', recs[1].item() / batch_size / n_gibbs_iter)
+            print()
         return results
 
     
@@ -376,7 +383,7 @@ class POISEVAE(nn.Module):
         
         nones = [None] * len(self.latent_dims)
         
-        z_priors, z_posteriors = self._sampling(G, nones, nones, t2, n_iterations=n_gibbs_iter)
+        _, z_posteriors, _, _, _ = self._sampling(G, nones, nones, t2, n_iterations=n_gibbs_iter)
 
         x_rec = self.decode(z_posteriors) # Decoding
         

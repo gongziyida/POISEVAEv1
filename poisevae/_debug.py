@@ -44,8 +44,8 @@ def read_debug_log(fname):
     if len(batch[-1].split('\n')) != len(batch[-2].split('\n')):
            batch = batch[:-1]
 
-    p_G = re.compile(r'dG[12][12].[a-zA-Z]+')
-    p_k = re.compile(r'[a-zA-Z]+[12]?p?.[a-zA-Z]+')
+    p_G = re.compile(r'dG[012][012].[a-zA-Z]+')
+    p_k = re.compile(r'[a-zA-Z]+[012]?p?.[a-zA-Z]+')
     p_v = re.compile(r'([-]?[0-9]\.[0-9]+e[+\-][0-9]+)|([-]?[0-9]+\.[0-9]+)')
 
     d = {'k': [], 'v': [], 'i': []}

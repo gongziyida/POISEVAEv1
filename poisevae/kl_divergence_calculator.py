@@ -72,8 +72,8 @@ class KLDN01:
     def calc(self, G, z, z_priors, nu1=None, nu2=None, mu=None, var=None, 
              nu1_=None, nu2_=None, mu_=None, var_=None):
         nu1, nu2 = init_posterior(nu1, nu2, mu, var, self.enc_config)
-        nu1_, nu2_ = init_posterior(nu1_, nu2_, mu_, var_, self.enc_config)
-        nu1, nu2 = new_nu(nu1, nu1_), new_nu(nu2, nu2_)
+        # nu1_, nu2_ = init_posterior(nu1_, nu2_, mu_, var_, self.enc_config)
+        # nu1, nu2 = new_nu(nu1, nu1_), new_nu(nu2, nu2_)
         part0 = self.value_calc(z[1], G.t(), nu1[0], nu2[0], 0, -1).sum(dim=1)
         part1 = self.value_calc(z[0], G, nu1[1], nu2[1], 0, -1).sum(dim=1)
         res = (part0 + part1) * 0.5
@@ -97,8 +97,8 @@ class KLDDerivative:
     def calc(self, G, z, z_priors, nu1=None, nu2=None, mu=None, var=None,
              nu1_=None, nu2_=None, mu_=None, var_=None):
         nu1, nu2 = init_posterior(nu1, nu2, mu, var, self.enc_config)
-        nu1_, nu2_ = init_posterior(nu1_, nu2_, mu_, var_, self.enc_config)
-        nu1, nu2 = new_nu(nu1, nu1_), new_nu(nu2, nu2_)
+        # nu1_, nu2_ = init_posterior(nu1_, nu2_, mu_, var_, self.enc_config)
+        # nu1, nu2 = new_nu(nu1, nu1_), new_nu(nu2, nu2_)
         ## Creating Sufficient statistics
         T_prior = torch.cat((z_priors[0], torch.square(z_priors[0])), -1)
         Tp_prior = torch.cat((z_priors[1], torch.square(z_priors[1])), -1)
@@ -122,8 +122,8 @@ class KLDDerivative:
             n = n - 1 if n > 1 else 1
             cov = torch.bmm(T_post_diff.transpose(1, 2), T_post_diff) / n
             covp = torch.bmm(Tp_post_diff.transpose(1, 2), Tp_post_diff) / n
-            dnu = torch.bmm(nu.unsqueeze(1), cov).squeeze(1)
-            dnup = torch.bmm(nup.unsqueeze(1), covp).squeeze(1)
+            # dnu = torch.bmm(nu.unsqueeze(1), cov).squeeze(1)
+            # dnup = torch.bmm(nup.unsqueeze(1), covp).squeeze(1)
             
             T_prior_outer = (T_prior.unsqueeze(-1) * Tp_prior.unsqueeze(-2))
             T_post_outer = (T_post.unsqueeze(-1) * Tp_post.unsqueeze(-2))
@@ -134,9 +134,13 @@ class KLDDerivative:
                - T_post_outer.mean(1) * (nuT + nupTp).mean(1) \
                + T_prior_outer.mean(1) - T_post_outer.mean(1)
             
-        part0 = (dnu * nu).sum(dim=-1)
-        part1 = (dnup * nup).sum(dim=-1)
-        part2 = (dG * G).sum(dim=(-1, -2))
+        # part0 = (dnu * nu).sum(dim=-1)
+        # part1 = (dnup * nup).sum(dim=-1)
+        dnu = torch.bmm(nu.unsqueeze(1), cov).squeeze(1)
+        dnup = torch.bmm(nup.unsqueeze(1), covp).squeeze(1)
+        part0 = 0.5 * (dnu * nu).sum(dim=-1)
+        part1 = 0.5 * (dnup * nup).sum(dim=-1)
+        part2 = (dG * G).sum(dim=(-1, -2))#.detach()
         
         # part2 = (T_prior_outer.detach() * G).sum(dim=(-1, -2)) - \
         #         (T_post_outer.detach() * G).sum(dim=(-1, -2))

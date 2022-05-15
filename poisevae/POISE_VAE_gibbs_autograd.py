@@ -290,7 +290,7 @@ class POISEVAE(nn.Module):
               torch.exp(self.g22_hat / 2 + self.t2_hat[0].unsqueeze(1) / 2) * \
               torch.tanh(self.g21_hat) * 0.99
         G = torch.cat((torch.cat((self.g11, g12), 1), torch.cat((g21, g22), 1)), 0)
-        return G
+        return G * 0
     
     def get_t(self):
         t2 = [-torch.exp(t2_hat) for t2_hat in self.t2_hat]

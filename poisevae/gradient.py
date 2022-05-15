@@ -20,12 +20,18 @@ class KLGradient(torch.autograd.Function):
         with torch.no_grad():
             T_p, Tp_p, T_q, Tp_q = ctx.T_p, ctx.Tp_p, ctx.T_q, ctx.Tp_q
             nu, nup = ctx.saved_tensors 
+            
             T_q_diff, Tp_q_diff = T_q - T_q.mean(1, keepdim=True), Tp_q - Tp_q.mean(1, keepdim=True)
             cov = torch.bmm(T_q_diff.transpose(1, 2), T_q_diff) / (T_q.shape[1] - 1)
             covp = torch.bmm(Tp_q_diff.transpose(1, 2), Tp_q_diff) / (Tp_q.shape[1] - 1)
-            TTp_p = (T_p.unsqueeze(-1) * Tp_p.unsqueeze(-2)).mean(1)
-            TTp_q = (T_q.unsqueeze(-1) * Tp_q.unsqueeze(-2)).mean(1)
-            dG = TTp_p - TTp_q
+            
+            TTp_p = (T_p.unsqueeze(-1) * Tp_p.unsqueeze(-2))#.mean(1)
+            TTp_q = (T_q.unsqueeze(-1) * Tp_q.unsqueeze(-2))#.mean(1)
+            nuT = (nu.unsqueeze(1) * T_q).sum(-1, keepdim=True).unsqueeze(-1)
+            
+            nupTp = (nup.unsqueeze(1) * Tp_q).sum(-1, keepdim=True).unsqueeze(-1)
+            dG = (TTp_q * (nuT + nupTp)).mean(1) - TTp_q.mean(1) * (nuT + nupTp).mean(1) \
+               + TTp_p.mean(1) - TTp_q.mean(1)
             dnu = torch.bmm(nu.unsqueeze(1), cov).squeeze(1)
             dnup = torch.bmm(nup.unsqueeze(1), covp).squeeze(1)
             # print('dG11 KL', torch.abs(dG[:, :dG.shape[1]//2, :dG.shape[2]//2]).mean().item(), 
