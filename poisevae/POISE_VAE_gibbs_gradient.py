@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from .gibbs_sampler_poise import GibbsSampler
 from .gradient import KLGradient, RecGradient
+# from .gradient_coupled_prior import KLGradient, RecGradient
 from numpy import prod, sqrt
 
 from time import time
@@ -256,10 +257,11 @@ class POISEVAE(nn.Module):
             assert torch.isnan(param1[0]).sum() == 0
             assert torch.isnan(-0.5 / param2[0]).sum() == 0
         elif self.enc_config == 'mu/nu2':
-            z_posteriors, T_posteriors = self.gibbs.sample(G, mu=param1, nu2=param2, 
-                                                           batch_size=batch_size,
-                                                           t1=self.t1, t2=t2, 
-                                                           n_iterations=n_iterations)
+            with torch.no_grad():
+                z_posteriors, T_posteriors = self.gibbs.sample(G, mu=param1, nu2=param2, 
+                                                               batch_size=batch_size,
+                                                               t1=self.t1, t2=t2, 
+                                                               n_iterations=n_iterations)
             nu = torch.cat([-2 * param1[0] * param2[0], param2[0]], -1) if param1[0] is not None else \
                  torch.zeros(T_posteriors[0].shape[0], T_posteriors[0].shape[2]).to(self.device)
             nup = torch.cat([-2 * param1[1] * param2[1], param2[1]], -1) if param1[1] is not None else \
