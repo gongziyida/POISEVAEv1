@@ -94,11 +94,14 @@ class GibbsSampler:
     
     def sample(self, G, nu1=None, nu2=None, mu=None, var=None, 
                nu1_=None, nu2_=None, mu_=None, var_=None, 
-               t1=None, t2=None, n_iterations=15, n_samples=15, batch_size=None):
+               t1=None, t2=None, n_iterations=15, n_samples=None, batch_size=None):
         nu1, nu2 = init_posterior(nu1, nu2, mu, var, self.enc_config)
         # nu1_, nu2_ = init_posterior(nu1_, nu2_, mu_, var_, self.enc_config)
         # nu1, nu2 = new_nu(nu1, nu1_), new_nu(nu2, nu2_)
 
+        if n_samples is None:
+            n_samples = n_iterations
+        
         z1, z2 = self.init_z(nu1, nu2, t1, t2, batch_size=batch_size)
         assert len(z1.shape) == 2
         assert len(z2.shape) == 2

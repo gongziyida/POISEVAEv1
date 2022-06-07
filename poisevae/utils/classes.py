@@ -7,7 +7,20 @@ class Categorical(torch.distributions.OneHotCategorical):
         shape, dtype = target.shape, target.dtype
         idx = target.view(-1).to(torch.long)
         target = torch.nn.functional.one_hot(idx, num_classes=self.probs.shape[1])
-        return super(Categorical, self).log_prob(target).view(*shape).to(dtype=dtype)
+        ret = super(CategoricalImage, self).log_prob(target)
+        return ret.view(shape[0], -1, *shape[2:]).to(dtype=dtype)
+    
+
+class CategoricalImage(torch.distributions.OneHotCategorical):
+    def __init__(self, logits):
+        super(CategoricalImage, self).__init__(logits=logits.to(dtype=torch.float64))
+    def log_prob(self, target):
+        shape, dtype = target.shape, target.dtype
+        if target.max() <= 1:
+            target = (target * 255).to(torch.long)
+        target = torch.nn.functional.one_hot(target, num_classes=256)
+        ret = super(CategoricalImage, self).log_prob(target)
+        return ret.view(shape[0], -1, *shape[2:]).to(dtype=dtype)
 
     
 class NULLWriter:

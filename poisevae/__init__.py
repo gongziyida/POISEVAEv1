@@ -5,6 +5,7 @@ from .POISE_VAE_gibbs_gradient import POISEVAE as POISEVAE_Gibbs_gradient
 import poisevae._debug
 import poisevae.utils
 import poisevae.networks
+from .pixel_cnn_wrapper import Wrapper 
 
 def POISEVAE_Gibbs(variant, *args, **kwargs):
     if variant == 'autograd':

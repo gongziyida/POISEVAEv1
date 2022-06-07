@@ -158,8 +158,8 @@ class POISEVAE(nn.Module):
         self.gibbs = GibbsSampler(self.latent_dims_flatten, enc_config=enc_config, 
                                   device=self.device)
         
-        
-        self.g11 = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
+        self.g11 = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))      
+#         self.g11 = nn.Parameter(torch.tril(torch.randn(*self.latent_dims_flatten, device=self.device)))
         self.g22_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g12_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g21_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
@@ -199,6 +199,8 @@ class POISEVAE(nn.Module):
                 param1.append(_param1.view(batch_size, -1))
                 sign = 1 if self.enc_config == 'mu/var' else -1
                 param2.append(sign * torch.exp(_log_param2.view(batch_size, -1)))
+#                 param2.append(sign * (_log_param2.view(batch_size, -1))**2)
+
         return param1, param2
     
     def decode(self, z):
@@ -221,7 +223,8 @@ class POISEVAE(nn.Module):
             zi = zi.view(batch_size * n_samples, *ld) # Match the shape to the output
             x_ = decoder(zi)
             if Gibbs_dim: # Gibbs dimension
-                x_ = (x_[0].view(batch_size, n_samples, *x_[0].shape[1:]), x_[1])
+                aux = x_[0].view(batch_size, n_samples, *x_[0].shape[1:])
+                x_ = (aux,) if len(x_) == 1 else (aux, *x_[1:])
             x_rec.append(x_)
         return x_rec
         
@@ -333,7 +336,6 @@ class POISEVAE(nn.Module):
         x_rec = self.decode(z_posteriors) # Decoding
         # assert torch.isnan(x_rec[0][0]).sum() == 0
         # assert torch.isnan(x_rec[1][0]).sum() == 0
-        
         # Reconstruction loss term *for decoder*
         dec_rec_loss = 0
         if hasattr(self, 'loss'):
@@ -341,11 +343,11 @@ class POISEVAE(nn.Module):
         else:
             recs = []
             for i in range(self.M):
+                dims = list(range(2, len(x[i].shape)+1))
                 x_rec[i] = self.likelihoods[i](*x_rec[i])
                 if x[i] is None:
                     recs.append(torch.tensor(0).to(self.device, G.dtype))
                 else:
-                    dims = list(range(2, len(x_rec[i].loc.shape)))
                     negative_loglike = -x_rec[i].log_prob(x[i].unsqueeze(1)).sum(dims)
                     if self.rec_weights is not None: # Modality weighting
                         negative_loglike *= self.rec_weights[i]
@@ -363,7 +365,7 @@ class POISEVAE(nn.Module):
 
         # These will then be used for logging only. Don't waste CUDA memory!
         z_posteriors = [i[:, -1].detach().cpu() for i in z_posteriors]
-        x_rec = [i.loc[:, -1].detach().cpu() for i in x_rec]
+        # x_rec = [i.loc[:, -1].detach().cpu() for i in x_rec]
         param1 = [i.detach().cpu() if i is not None else None for i in param1]
         param2 = [i.detach().cpu() if i is not None else None for i in param2]
         results = {
