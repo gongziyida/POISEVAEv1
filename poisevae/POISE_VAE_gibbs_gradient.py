@@ -119,7 +119,7 @@ class POISEVAE(nn.Module):
             raise ValueError('`enc_config` value unreconized.')
         if KL_calc not in ('derivative', 'std_normal'): 
             raise ValueError('`KL_calc` value unreconized.')
-        if reduction != 'mean':
+        if reduction not in ('mean',):
             raise NotImplementedError
             
         # Get the latent dimensions
@@ -158,8 +158,7 @@ class POISEVAE(nn.Module):
         self.gibbs = GibbsSampler(self.latent_dims_flatten, enc_config=enc_config, 
                                   device=self.device)
         
-        self.g11 = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))      
-#         self.g11 = nn.Parameter(torch.tril(torch.randn(*self.latent_dims_flatten, device=self.device)))
+        self.g11 = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g22_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g12_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
         self.g21_hat = nn.Parameter(torch.randn(*self.latent_dims_flatten, device=self.device))
@@ -177,7 +176,7 @@ class POISEVAE(nn.Module):
     def set_mask_missing(self, mask_missing):
         self.mask_missing = mask_missing
     
-    def encode(self, x):
+    def encode(self, x, **kwargs):
         """
         Encode the samples from multiple sources
         Parameter
@@ -195,15 +194,15 @@ class POISEVAE(nn.Module):
                 param2.append(self.missing_data)
             else:
                 batch_size = xi.shape[0] if self.batched else 1
-                _param1, _log_param2 = self.encoders[i](xi)
-                param1.append(_param1.view(batch_size, -1))
+                ret = self.encoders[i](xi)
+                param1.append(ret[0].view(batch_size, -1))
                 sign = 1 if self.enc_config == 'mu/var' else -1
-                param2.append(sign * torch.exp(_log_param2.view(batch_size, -1)))
-#                 param2.append(sign * (_log_param2.view(batch_size, -1))**2)
+                param2.append(sign * torch.exp(ret[1].view(batch_size, -1)))
+                # param2.append(sign * nn.functional.softplus(ret[1].view(batch_size, -1)))
 
         return param1, param2
     
-    def decode(self, z):
+    def decode(self, z, **kwargs):
         """
         Unsqueeze the samples from each latent space (if necessary), and decode
         Parameter
@@ -287,7 +286,32 @@ class POISEVAE(nn.Module):
         t2 = [-torch.exp(t2_hat) for t2_hat in self.t2_hat]
         return self.t1, t2
     
-    def forward(self, x, n_gibbs_iter=15, kl_weight=1, detach_G=False):
+    def rec_loss(self, x_rec, x):
+        # Reconstruction loss term *for decoder*
+        negative_loglike = []
+        
+        for i in range(self.M):
+            if x[i] is None:
+                negative_loglike.append(torch.tensor(0.0, device=self.device))
+            elif hasattr(self, 'loss'):
+                dims = list(range(2, len(x_rec[i][0].shape))) # Not summing batch and Gibbs dims
+                negative_loglike.append(self.loss[i](x_rec[i], x[i], reduction='none').sum(dims))
+            else:
+                dist = self.likelihoods[i](*x_rec[i])
+                dims = list(range(2, len(x_rec[i][0].shape))) # Not summing batch and Gibbs dims
+                negative_loglike.append(-dist.log_prob(x[i].unsqueeze(1)).sum(dims))
+                
+            # if self.reduction == 'mean':
+            #     negative_loglike[i] = negative_loglike[i].mean()
+            # else:
+            #     negative_loglike[i] = negative_loglike[i].sum()
+                
+            if self.rec_weights is not None: # Modality weighting
+                negative_loglike[i] *= self.rec_weights[i]
+                
+        return negative_loglike
+    
+    def forward(self, x, n_gibbs_iter=15, kl_weight=1, detach_G=False, enc_kwargs={}, dec_kwargs={}):
         """
         Return
         ------
@@ -308,15 +332,15 @@ class POISEVAE(nn.Module):
         batch_size = self._fetch_batch_size(x)
         
         if self.mask_missing is not None:
-            param1, param2 = self.encode(self.mask_missing(x))
+            param1, param2 = self.encode(self.mask_missing(x), **enc_kwargs)
         else:
-            param1, param2 = self.encode(x)
-        if param1[0] is not None and param1[1] is not None:
-            print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
-            print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
-            print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
-            print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
-            assert torch.isnan(param1[0]).sum() == 0
+            param1, param2 = self.encode(x, **enc_kwargs)
+        # if param1[0] is not None and param1[1] is not None:
+        #     print('mu max:', torch.abs(param1[0]).max().item(), 'mu mean:', torch.abs(param1[0]).mean().item())
+        #     print('mup max:', torch.abs(param1[1]).max().item(), 'mup mean:', torch.abs(param1[1]).mean().item())
+        #     print('var min:', torch.abs(param2[0]).min().item(), 'var mean:', torch.abs(param2[0]).mean().item())
+        #     print('varp min:', torch.abs(param2[1]).min().item(), 'varp mean:', torch.abs(param2[1]).mean().item())
+        #     assert torch.isnan(param1[0]).sum() == 0
         
         G = self.get_G().detach() if detach_G else self.get_G()
         _, t2 = self.get_t()
@@ -333,50 +357,32 @@ class POISEVAE(nn.Module):
         # assert torch.isnan(z_posteriors[0]).sum() == 0
         # assert torch.isnan(z_posteriors[1]).sum() == 0
 
-        x_rec = self.decode(z_posteriors) # Decoding
+        x_rec = self.decode(z_posteriors, **dec_kwargs) # Decoding
         # assert torch.isnan(x_rec[0][0]).sum() == 0
         # assert torch.isnan(x_rec[1][0]).sum() == 0
-        # Reconstruction loss term *for decoder*
-        dec_rec_loss = 0
-        if hasattr(self, 'loss'):
-            recs = [loss_func(x_rec[i], x[i]) for i, loss_func in enumerate(self.loss)]
-        else:
-            recs = []
-            for i in range(self.M):
-                dims = list(range(2, len(x[i].shape)+1))
-                x_rec[i] = self.likelihoods[i](*x_rec[i])
-                if x[i] is None:
-                    recs.append(torch.tensor(0).to(self.device, G.dtype))
-                else:
-                    negative_loglike = -x_rec[i].log_prob(x[i].unsqueeze(1)).sum(dims)
-                    if self.rec_weights is not None: # Modality weighting
-                        negative_loglike *= self.rec_weights[i]
-                    dec_rec_loss += negative_loglike
-                    recs.append(negative_loglike.detach().sum()) # For loggging 
-        
+                
         kl = KLGradient.apply(*T_priors, *T_posteriors, G, *nus)
-        
+            
         # Total loss
         if x[0] is None and x[1] is None: # No rec loss
             total_loss = kl_weight * kl
+            rec_loss = [0 for _ in range(self.M)]
         else:
+            dec_rec_loss = self.rec_loss(x_rec, x) # Differs from autograd version: no reduction
+            rec_loss = [i.detach().mean() for i in dec_rec_loss]
+            dec_rec_loss = sum(dec_rec_loss)
             enc_rec_loss = RecGradient.apply(*T_posteriors, G, *nus, dec_rec_loss.detach())
             total_loss = kl_weight * kl + dec_rec_loss.mean() + enc_rec_loss
-
+            
         # These will then be used for logging only. Don't waste CUDA memory!
         z_posteriors = [i[:, -1].detach().cpu() for i in z_posteriors]
-        # x_rec = [i.loc[:, -1].detach().cpu() for i in x_rec]
+        x_rec = [i[0][:, -1].detach().cpu() for i in x_rec]
         param1 = [i.detach().cpu() if i is not None else None for i in param1]
         param2 = [i.detach().cpu() if i is not None else None for i in param2]
         results = {
             'z': z_posteriors, 'x_rec': x_rec, 'param1': param1, 'param2': param2,
-            'total_loss': total_loss, 'rec_losses': recs, 'KL_loss': kl
+            'total_loss': total_loss, 'rec_losses': rec_loss, 'KL_loss': kl.item()
         }
-        if param1[0] is not None and param1[1] is not None:
-            print('total loss:', total_loss.item(), 'kl term:', kl.item())
-            print('rec1 loss:', recs[0].item() / batch_size / n_gibbs_iter, 
-                  'rec2 loss:', recs[1].item() / batch_size / n_gibbs_iter)
-            print()
         return results
 
     
@@ -388,11 +394,10 @@ class POISEVAE(nn.Module):
         nones = [None] * len(self.latent_dims)
         
         _, z_posteriors, _, _, _ = self._sampling(G, nones, nones, t2, n_iterations=n_gibbs_iter)
-
-        x_rec = self.decode(z_posteriors) # Decoding
+        x_rec = self.decode(z_posteriors, **dec_kwargs)
         
-        for i in range(self.M):
-            x_rec[i] = self.likelihoods[i](*x_rec[i])
+        z_posteriors = [i[:, -1].detach().cpu() for i in z_posteriors]
+        x_rec = [i[0][:, -1].detach().cpu() for i in x_rec]
             
         results = {'z': z_posteriors, 'x_rec': x_rec}
         
