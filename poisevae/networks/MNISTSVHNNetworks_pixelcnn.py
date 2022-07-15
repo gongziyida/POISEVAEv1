@@ -1,28 +1,21 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class pixelcnn_decoder(nn.Module):
-    def __init__(self, mlp, pixelcnn, img_dims):
+    def __init__(self, pixelcnn):
         super(pixelcnn_decoder, self).__init__()
-        self.mlp = mlp
         self.pixelcnn = pixelcnn
-        self.img_dims = img_dims
 
-    def forward(self, z):
-        sample = torch.zeros(*z.shape[:1], *self.img_dims).to(z.device) # (batch * gibbs, img dims)
-        sample[..., 0, 0] = self.mlp(z) # (batch * gibbs, channel)
-        sample = self.pixelcnn(sample).flatten(-2 if self.img_dims[0] == 1 else -3,-1)
-        sample = sample.transpose(-1, -2) # (batch * gibbs, img dims flattened, 255)
-        # sample = F.softmax(sample, dim=-1).data
-        #Generating images pixel by pixel
-        #for i in range(self.img_dims[1]):
-            #for j in range(self.img_dims[2]):
-                #if i==0 and j==0:
-                    #continue
-                #out = self.pixelcnn(sample) # (batch * gibbs, 255, img dims)
-                #probs = F.softmax(out[:,:,i,j], dim=1).data
-                #sample[...,i,j] = torch.multinomial(probs, 1).float() / 255.0
-        #sample = sample.flatten(-3, -1)
-          
+    def forward(self, z, img,generate_mode):
+        img_out = img.reshape(img.shape[0],1,28,28).to(z.device)
+        if generate_mode is False:
+            sample = self.pixelcnn(img_out, z )
+        else:
+            shape = [1,28,28]
+            count = z.shape[0]
+            sample = self.pixelcnn.sample(img_out,shape,count, z )
+#             sample = self.pixelcnn(img_out, z )
+
         return (sample, )
