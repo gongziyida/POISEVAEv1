@@ -239,7 +239,8 @@ class POISEVAE(nn.Module):
             zi = zi.view(batch_size * n_samples, *ld) # Match the shape to the output
             x_ = decoder(zi, **kwargs)
             if Gibbs_dim: # Gibbs dimension
-                x_ = (x_[0].view(batch_size, n_samples, *x_[0].shape[1:]), x_[1])
+                aux = x_[0].view(batch_size, n_samples, *x_[0].shape[1:])
+                x_ = (aux,) if len(x_) == 1 else (aux, *x_[1:])
             x_rec.append(x_)
         return x_rec
         
