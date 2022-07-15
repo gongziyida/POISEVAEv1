@@ -298,8 +298,8 @@ class POISEVAE(nn.Module):
                 negative_loglike.append(self.loss[i](x_rec[i], x[i], reduction='none').sum(dims))
             else:
                 dist = self.likelihoods[i](*x_rec[i])
-                dims = list(range(2, len(x_rec[i][0].shape))) # Not summing batch and Gibbs dims
-                negative_loglike.append(-dist.log_prob(x[i].unsqueeze(1)).sum(dims))
+                aux = -dist.log_prob(x[i].unsqueeze(1))
+                negative_loglike.append(aux.sum(list(range(2, len(aux.shape))))) # (batch, Gibbs)
                 
             # if self.reduction == 'mean':
             #     negative_loglike[i] = negative_loglike[i].mean()
